@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Partner Analytics Overview Response",
+  "description": "Sign-up, master-partner, and activity summaries for the requested reporting period.",
+  "type": "object",
+  "properties": {
+    "period": {
+      "type": "object",
+      "description": "The inclusive reporting period the summaries cover.",
+      "properties": {
+        "start_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Inclusive start of the reporting period.",
+          "example": "2026-07-01"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Inclusive end of the reporting period.",
+          "example": "2026-07-21"
+        }
+      },
+      "required": ["start_date", "end_date"]
+    },
+    "currency": {
+      "type": "string",
+      "const": "USD",
+      "default": "USD",
+      "description": "Currency of every amount in this response. Always USD.",
+      "example": "USD"
+    },
+    "has_lifetime_referred_client": {
+      "type": "boolean",
+      "description": "Whether the partner has referred at least one client over their lifetime, regardless of the reporting period.",
+      "example": true
+    },
+    "signups": {
+      "type": "object",
+      "description": "Clients who signed up through the partner during the reporting period.",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total sign-ups attributed to the partner.",
+          "example": 128
+        },
+        "real_accounts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sign-ups that opened a real account.",
+          "example": 94
+        },
+        "first_time_depositors": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sign-ups that made their first deposit.",
+          "example": 51
+        },
+        "first_time_traders": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sign-ups that placed their first trade.",
+          "example": 43
+        }
+      },
+      "required": [
+        "total",
+        "real_accounts",
+        "first_time_depositors",
+        "first_time_traders"
+      ]
+    },
+    "master_partner": {
+      "type": "object",
+      "description": "Sub-partner performance, for a partner who manages other partners.",
+      "properties": {
+        "earnings_occurred": {
+          "type": "number",
+          "format": "double",
+          "description": "Master-partner earnings attributed to the reporting period, in USD.",
+          "example": 1250.75
+        },
+        "active_subpartners": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sub-partners who were active during the reporting period.",
+          "example": 6
+        }
+      },
+      "required": ["earnings_occurred", "active_subpartners"]
+    },
+    "activity": {
+      "type": "object",
+      "description": "Commission and trading activity for the reporting period.",
+      "properties": {
+        "paid": {
+          "type": "number",
+          "format": "double",
+          "description": "Paid partner commission for the reporting period, in USD.",
+          "example": 3820.4
+        },
+        "pending": {
+          "type": "number",
+          "format": "double",
+          "description": "Pending partner commission for the reporting period, in USD.",
+          "example": 415.2
+        },
+        "active_traders": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Referred clients who traded during the reporting period.",
+          "example": 37
+        }
+      },
+      "required": ["paid", "pending", "active_traders"]
+    }
+  },
+  "required": [
+    "period",
+    "currency",
+    "has_lifetime_referred_client",
+    "signups",
+    "master_partner",
+    "activity"
+  ]
+}

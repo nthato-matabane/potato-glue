@@ -1,0 +1,28 @@
+# fly.toml — Spike Agent on Fly.io
+# NOTE: Fly has no free tier in 2026 (~$5/mo Hobby plan after a short trial).
+# Kept here so `fly launch` picks it up if you ever choose the paid route.
+
+app = "spike-agent"
+
+[build]
+  # uses the Dockerfile in this folder
+
+[env]
+  DATA_DIR = "/data"
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # CRITICAL: the agent must never scale to zero — that would stop trading
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"    # python + numpy needs more than the 256mb default
+
+[[mounts]]
+  source = "spike_data"     # create with: fly volumes create spike_data --size 1
+  destination = "/data"

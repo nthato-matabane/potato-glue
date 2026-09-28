@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cross-Currency Transfer Request",
+  "description": "Cross-currency transfer between two wallets owned by the authenticated client. Quote the rate first with GET /wallet/v1/exchange-rate. The body is a strict whitelist - fields not listed here are rejected with 400.",
+  "type": "object",
+  "properties": {
+    "headers": {
+      "type": "object",
+      "properties": {
+        "Deriv-App-ID": {
+          "type": "string",
+          "description": "Application identifier. Required for Personal Access Token (PAT) authentication; not required for OAuth Bearer tokens."
+        },
+        "Authorization": {
+          "type": "string",
+          "description": "Bearer token for authentication",
+          "example": "Bearer YOUR_AUTH_TOKEN"
+        },
+        "Content-Type": {
+          "type": "string",
+          "enum": ["application/json"],
+          "description": "Content type"
+        }
+      },
+      "required": ["Deriv-App-ID", "Authorization", "Content-Type"]
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_wallet_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Wallet to debit, in source_currency. Must belong to the authenticated client.",
+          "example": "942a2f2d-1f33-4559-994e-42b403033bc6"
+        },
+        "source_currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency debited from the source wallet.",
+          "example": "USD"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "Amount to convert, in source_currency, as a decimal string. Any applicable currency-exchange fee is deducted from this amount.",
+          "example": "100.00"
+        },
+        "destination_wallet_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Wallet to credit, in destination_currency. Must belong to the authenticated client.",
+          "example": "ef4b3abd-c05e-42ea-a3f2-021ec69e1580"
+        },
+        "destination_currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency credited to the destination wallet.",
+          "example": "BTC"
+        },
+        "exchange_rate": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "Quoted exchange rate as a positive decimal string, taken from an exchange-rate quote obtained beforehand.",
+          "example": "0.0000095238"
+        },
+        "rate_token": {
+          "type": "string",
+          "description": "Token attesting to the quoted exchange rate, issued together with the quote.",
+          "example": "eyJhbGciOi..."
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Idempotency key. Reusing a request_id you have already submitted does not create a duplicate transfer.",
+          "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional free-text note attached to the transfer.",
+          "example": "Convert USD to BTC"
+        }
+      },
+      "required": [
+        "source_wallet_id",
+        "source_currency",
+        "amount",
+        "destination_wallet_id",
+        "destination_currency",
+        "exchange_rate",
+        "rate_token",
+        "request_id"
+      ]
+    }
+  },
+  "required": ["headers", "body"]
+}

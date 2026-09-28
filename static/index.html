@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Spike Agent — Boom/Crash self-learning trader</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>📈</text></svg>">
+</head>
+<body>
+
+<!-- login -->
+<div id="login" class="overlay hidden">
+  <div class="login-card">
+    <h1>⚡ Spike Agent</h1>
+    <p>Self-learning Boom/Crash trader</p>
+    <input id="login-password" type="password" placeholder="Access password" autocomplete="current-password">
+    <button id="login-btn" class="btn primary">Sign in</button>
+    <div id="login-error" class="error"></div>
+  </div>
+</div>
+
+<header>
+  <div class="brand">
+    <span class="logo">⚡</span>
+    <div>
+      <strong>Spike Agent</strong>
+      <small>Boom/Crash self-learning trader</small>
+    </div>
+  </div>
+  <div class="header-right">
+    <span id="conn-badge" class="badge dim" title="Deriv market-data link">ticks …</span>
+    <span id="balance-badge" class="badge">—</span>
+    <span id="run-badge" class="badge off">STOPPED</span>
+    <button id="toggle-btn" class="btn primary">Start agent</button>
+    <button id="settings-btn" class="btn ghost" title="Settings">⚙</button>
+  </div>
+</header>
+
+<main>
+  <!-- overview -->
+  <section class="overview">
+    <div class="stat"><label>Equity (paper)</label><b id="stat-paper">—</b></div>
+    <div class="stat"><label>Live balance</label><b id="stat-live">—</b></div>
+    <div class="stat"><label>Daily P&amp;L (live)</label><b id="stat-daily">—</b></div>
+    <div class="stat"><label>Live trades</label><b id="stat-trades">—</b></div>
+    <div class="stat"><label>Strategy</label><b id="stat-mode">—</b></div>
+    <div class="stat"><label>Uptime</label><b id="stat-uptime">—</b></div>
+    <div class="chart-wrap">
+      <canvas id="equity-chart" height="120"></canvas>
+      <div class="chart-label">Equity curve (paper 🟦 / live 🟩)</div>
+    </div>
+  </section>
+
+  <div id="error-banner" class="banner hidden"></div>
+
+  <!-- symbol panels -->
+  <section id="symbols" class="grid"></section>
+
+  <!-- activity + trades -->
+  <section class="two-col">
+    <div class="panel">
+      <h3>Activity</h3>
+      <div id="activity" class="feed"></div>
+    </div>
+    <div class="panel">
+      <h3>Recent trades <span class="hint">(P = paper, L = live)</span></h3>
+      <div class="table-wrap">
+        <table id="trades-table">
+          <thead><tr><th>Time</th><th>Symbol</th><th>Mode</th><th>Side</th><th>Type</th><th>P&amp;L</th><th>Reason</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Runs 24/7 in this container — no computer or phone needs to stay on.
+    Trading multipliers involves risk; the agent starts in paper mode.
+  </footer>
+</main>
+
+<!-- settings -->
+<div id="settings" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button class="btn ghost" id="settings-close">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <h4>Deriv account</h4>
+      <div class="row">
+        <label>App ID <input id="set-appid" placeholder="e.g. 12345"></label>
+        <label>PAT token <input id="set-pat" type="password" placeholder="paste Personal Access Token"></label>
+      </div>
+      <div class="row">
+        <button id="fetch-accounts" class="btn ghost">Fetch my accounts</button>
+        <label>Account <select id="set-account"><option value="">— select —</option></select></label>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="set-live"> Live trading
+          <small>off = paper trades only (recommended while learning)</small></label>
+      </div>
+
+      <h4>Strategy</h4>
+      <div class="row">
+        <label>Mode
+          <select id="set-mode">
+            <option value="auto">auto — agent picks the profitable side</option>
+            <option value="drift">drift — exit just before the spike</option>
+            <option value="spike">spike — catch the spike</option>
+          </select>
+        </label>
+        <label>Symbols <div id="set-symbols" class="chips"></div></label>
+      </div>
+      <div class="row">
+        <label>Stake $ <input id="set-stake" type="number" min="1" step="0.5"></label>
+        <label>Multiplier
+          <select id="set-mult">
+            <option>100</option><option>150</option><option>200</option>
+            <option>300</option><option>400</option><option>500</option>
+          </select>
+        </label>
+      </div>
+
+      <h4>Risk limits</h4>
+      <div class="row">
+        <label>Max daily loss $ <input id="set-dailyl" type="number" step="1"></label>
+        <label>Stop loss % <input id="set-sl" type="number" step="5"></label>
+        <label>Take profit % <input id="set-tp" type="number" step="5"></label>
+      </div>
+      <div class="row">
+        <label>Entry threshold <input id="set-entry" type="number" step="0.05"></label>
+        <label>Exit (pre-spike) threshold <input id="set-exit" type="number" step="0.05"></label>
+        <label>Auto min trades <input id="set-auton" type="number" step="5"></label>
+      </div>
+
+      <div id="settings-msg" class="msg"></div>
+      <div class="modal-foot">
+        <button id="settings-save" class="btn primary">Save settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

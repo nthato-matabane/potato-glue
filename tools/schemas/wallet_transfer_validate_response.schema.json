@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Validate Transfer Response",
+  "description": "Successful transfer validation response. An invalid transfer returns an error response rather than a negative result.",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "is_valid": {
+          "type": "boolean",
+          "description": "Always true - an invalid transfer produces an error response, not false."
+        },
+        "details": {
+          "type": "object",
+          "description": "Breakdown of the validated transfer.",
+          "properties": {
+            "transfer": {
+              "type": "object",
+              "description": "Classification of the validated transfer.",
+              "properties": {
+                "is_cross_currency": {
+                  "type": "boolean",
+                  "description": "Whether the source and destination currencies differ."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["wallet_to_wallet", "wallet_to_platform"],
+                  "description": "Kind of transfer."
+                }
+              },
+              "required": ["is_cross_currency", "type"]
+            },
+            "source": {
+              "type": "object",
+              "description": "Source side of the validated transfer. All amounts are decimal strings.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Source account identifier, echoed from the request: wallet UUID or platform account ID.",
+                  "example": "942a2f2d-1f33-4559-994e-42b403033bc6"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["main", "p2p", "platform", "payment_agent"],
+                  "description": "Account type that can take part in a transfer."
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "Currency of the source account.",
+                  "example": "USD"
+                },
+                "amount": {
+                  "type": "string",
+                  "description": "Requested amount.",
+                  "example": "100.00"
+                },
+                "net_amount": {
+                  "type": "string",
+                  "description": "Amount minus the fee, in the source currency.",
+                  "example": "99.50"
+                }
+              },
+              "required": ["id", "type", "currency", "amount", "net_amount"]
+            },
+            "destination": {
+              "type": "object",
+              "description": "Destination side of the validated transfer. All amounts are decimal strings.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Destination account identifier, echoed from the request: wallet UUID or platform account ID.",
+                  "example": "ef4b3abd-c05e-42ea-a3f2-021ec69e1580"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["main", "p2p", "platform", "payment_agent"],
+                  "description": "Account type that can take part in a transfer."
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "Currency of the destination account.",
+                  "example": "USD"
+                },
+                "amount": {
+                  "type": "string",
+                  "description": "Estimated amount the destination receives, floored to the destination currency's precision. For cross-currency transfers this is an estimate, not the settled value.",
+                  "example": "99.50"
+                },
+                "estimated": {
+                  "type": "boolean",
+                  "description": "Always true - amount is an estimate."
+                }
+              },
+              "required": ["id", "type", "currency", "amount", "estimated"]
+            },
+            "fee": {
+              "type": "object",
+              "description": "Fee that would be charged on the transfer.",
+              "properties": {
+                "amount": {
+                  "type": "string",
+                  "description": "Fee amount, in currency.",
+                  "example": "0.50"
+                },
+                "percentage": {
+                  "type": "number",
+                  "description": "Nominal fee percentage.",
+                  "example": 0.5
+                },
+                "applied_percentage": {
+                  "type": "string",
+                  "description": "Effective fee percentage actually charged. Exceeds percentage when min_fee_applied is true.",
+                  "example": "0.50"
+                },
+                "min_fee_applied": {
+                  "type": "boolean",
+                  "description": "True when the percentage-based fee fell below the currency's smallest ledger unit and was raised to it."
+                },
+                "reason_code": {
+                  "type": ["string", "null"],
+                  "enum": ["convenience_fee", "currency_exchange", null],
+                  "description": "Why the fee is charged. Null or absent when no fee applies."
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "Currency the fee is charged in - the wallet side of the transfer.",
+                  "example": "USD"
+                },
+                "source": {
+                  "type": "string",
+                  "description": "Account the fee is charged from: wallet UUID or platform account ID.",
+                  "example": "942a2f2d-1f33-4559-994e-42b403033bc6"
+                }
+              },
+              "required": [
+                "amount",
+                "percentage",
+                "applied_percentage",
+                "min_fee_applied",
+                "currency",
+                "source"
+              ]
+            }
+          },
+          "required": ["transfer", "source", "destination", "fee"]
+        }
+      },
+      "required": ["is_valid", "details"]
+    }
+  },
+  "required": ["data"]
+}

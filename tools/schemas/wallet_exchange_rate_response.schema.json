@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Exchange Rate Response",
+  "description": "Successful exchange-rate quote response.",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "description": "The quote for the requested currency pair.",
+      "properties": {
+        "exchange_rate": {
+          "type": "string",
+          "description": "Quoted exchange rate as a decimal string.",
+          "example": "0.0000095238"
+        },
+        "rate_token": {
+          "type": "string",
+          "description": "Token attesting to this quote. Pass it, together with the rate, to POST /wallet/v1/transfers/exchange or to a cross-currency POST /wallet/v1/transfers/platforms request to execute at the quoted rate.",
+          "example": "eyJhbGciOi..."
+        }
+      }
+    }
+  },
+  "required": ["data"]
+}

@@ -1,0 +1,19 @@
+# secrets
+.env
+cookies.txt
+
+# learned state / local database (per-machine, regenerated)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# local run artifacts
+server.log
+nohup.out
+*.pid
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/

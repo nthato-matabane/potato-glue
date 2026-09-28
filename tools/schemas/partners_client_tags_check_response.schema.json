@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Check Client Tags Response",
+  "description": "Tag status for each client ID in the request.",
+  "type": "object",
+  "properties": {
+    "partner_id": {
+      "type": "integer",
+      "description": "Resolved partner member ID.",
+      "example": 4821
+    },
+    "total_checked": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of client IDs checked.",
+      "example": 2
+    },
+    "tagged_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of checked clients tagged to the partner.",
+      "example": 1
+    },
+    "clients": {
+      "type": "array",
+      "description": "One result per client ID checked.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "Sanitised client ID from the request.",
+            "example": "12345"
+          },
+          "is_tagged": {
+            "type": "boolean",
+            "description": "Whether the client is tagged directly to the authenticated partner.",
+            "example": true
+          }
+        },
+        "required": ["client_id", "is_tagged"]
+      }
+    }
+  },
+  "required": ["partner_id", "total_checked", "tagged_count", "clients"]
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Partner Analytics Overview Request",
+  "description": "Request the authenticated partner's sign-up, master-partner, and activity summaries for an inclusive reporting period.",
+  "type": "object",
+  "properties": {
+    "headers": {
+      "type": "object",
+      "properties": {
+        "Deriv-App-ID": {
+          "type": "string",
+          "description": "Application identifier. Required for Personal Access Token (PAT) authentication; not required for OAuth Bearer tokens."
+        },
+        "Authorization": {
+          "type": "string",
+          "description": "Bearer token for authentication",
+          "example": "Bearer YOUR_AUTH_TOKEN"
+        }
+      },
+      "required": ["Deriv-App-ID", "Authorization"]
+    },
+    "query": {
+      "type": "object",
+      "properties": {
+        "start_date": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Inclusive start of the reporting period. The period may span at most 730 days.",
+          "example": "2026-07-01"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Inclusive end of the reporting period. Must fall on or after start_date, and no more than 730 days later.",
+          "example": "2026-07-21"
+        }
+      },
+      "required": ["start_date", "end_date"]
+    }
+  },
+  "required": ["headers", "query"]
+}

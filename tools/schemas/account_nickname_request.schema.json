@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Account Nickname (request)",
+  "description": "Request for the GET /account/v1/nickname endpoint. Requires the Authorization header, plus Deriv-App-ID when authenticating with a Personal Access Token (PAT); takes no query parameters or body. The caller's brand and identity are resolved by the gateway from the X-Brand and X-Client-ID request headers and cannot be spoofed by the client.",
+  "type": "object",
+  "properties": {
+    "headers": {
+      "type": "object",
+      "properties": {
+        "Deriv-App-ID": {
+          "type": "string",
+          "description": "Application identifier. Required for Personal Access Token (PAT) authentication; not required for OAuth Bearer tokens."
+        },
+        "Authorization": {
+          "type": "string",
+          "description": "Bearer token for authentication",
+          "example": "Bearer YOUR_ACCESS_TOKEN"
+        }
+      },
+      "required": ["Deriv-App-ID", "Authorization"]
+    }
+  },
+  "required": ["headers"],
+  "additionalProperties": false
+}

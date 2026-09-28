@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Transfer Between Wallets Response",
+  "description": "Successful transfer execution response.",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "description": "Details of the executed transfer. Always echoes the request's request_id; the remaining fields describe the recorded transfer.",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The request_id supplied in the request, echoed back as the idempotency reference of the executed transfer.",
+          "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        }
+      },
+      "required": ["request_id"]
+    }
+  },
+  "required": ["data"]
+}

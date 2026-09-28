@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Transfer Between Wallets Request",
+  "description": "Same-currency transfer between two wallets owned by the authenticated client. The body is a strict whitelist - fields not listed here are rejected with 400.",
+  "type": "object",
+  "properties": {
+    "headers": {
+      "type": "object",
+      "properties": {
+        "Deriv-App-ID": {
+          "type": "string",
+          "description": "Application identifier. Required for Personal Access Token (PAT) authentication; not required for OAuth Bearer tokens."
+        },
+        "Authorization": {
+          "type": "string",
+          "description": "Bearer token for authentication",
+          "example": "Bearer YOUR_AUTH_TOKEN"
+        },
+        "Content-Type": {
+          "type": "string",
+          "enum": ["application/json"],
+          "description": "Content type"
+        }
+      },
+      "required": ["Deriv-App-ID", "Authorization", "Content-Type"]
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency of the transfer. Both wallets must hold a balance in this currency.",
+          "example": "USD"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "Transfer amount as a decimal string. Any applicable fee is deducted from this amount.",
+          "example": "100.00"
+        },
+        "source_wallet_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Wallet to debit. Must belong to the authenticated client.",
+          "example": "942a2f2d-1f33-4559-994e-42b403033bc6"
+        },
+        "destination_wallet_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Wallet to credit. Must belong to the authenticated client.",
+          "example": "ef4b3abd-c05e-42ea-a3f2-021ec69e1580"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Idempotency key. Reusing a request_id you have already submitted does not create a duplicate transfer.",
+          "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional free-text note attached to the transfer.",
+          "example": "Move funds to P2P wallet"
+        }
+      },
+      "required": [
+        "currency",
+        "amount",
+        "source_wallet_id",
+        "destination_wallet_id",
+        "request_id"
+      ]
+    }
+  },
+  "required": ["headers", "body"]
+}

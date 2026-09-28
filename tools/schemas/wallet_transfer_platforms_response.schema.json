@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Platform Transfer Response",
+  "description": "Successful platform transfer execution response.",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "description": "Details of the executed platform transfer.",
+      "properties": {
+        "status": {
+          "type": "object",
+          "description": "Status details of the executed transfer.",
+          "additionalProperties": true
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The request_id supplied in the request, echoed back as the idempotency reference of the executed transfer.",
+          "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        }
+      },
+      "required": ["status", "request_id"]
+    }
+  },
+  "required": ["data"]
+}

@@ -1,0 +1,27 @@
+# Render blueprint — free web service (no credit card, 750 h/month ≈ 24/7).
+# Deploy: push this repo to GitHub → Render → New → Blueprint → pick repo.
+# See DEPLOY.md for the full step-by-step guide.
+#
+# Why AUTO_START + KEEPALIVE matter on the free plan:
+#  * Free instances get a fresh filesystem on every redeploy/restart, which
+#    resets the dashboard's "agent running" switch → AUTO_START=true boots
+#    the agent anyway.
+#  * Free instances sleep after ~15 min with no incoming HTTP traffic, which
+#    would drop the Deriv WebSocket and stop trading. The app pings its own
+#    public /api/health every 5 min to stay awake (URL is learned from your
+#    first dashboard visit; set KEEPALIVE_URL explicitly if you prefer).
+services:
+  - type: web
+    name: spike-agent
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: AUTO_START
+        value: "true"
+      - key: KEEPALIVE_URL
+        sync: false        # optional: https://<your-service>.onrender.com/api/health
+      - key: ACCESS_PASSWORD
+        sync: false        # set this in the Render dashboard before first login

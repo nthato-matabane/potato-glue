@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Exchange Rate Request",
+  "description": "Request a quote for converting between two currencies.",
+  "type": "object",
+  "properties": {
+    "headers": {
+      "type": "object",
+      "properties": {
+        "Deriv-App-ID": {
+          "type": "string",
+          "description": "Application identifier. Required for Personal Access Token (PAT) authentication; not required for OAuth Bearer tokens."
+        },
+        "Authorization": {
+          "type": "string",
+          "description": "Bearer token for authentication",
+          "example": "Bearer YOUR_AUTH_TOKEN"
+        }
+      },
+      "required": ["Deriv-App-ID", "Authorization"]
+    },
+    "query": {
+      "type": "object",
+      "properties": {
+        "source_currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency to convert from.",
+          "example": "USD"
+        },
+        "destination_currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency to convert to.",
+          "example": "BTC"
+        }
+      },
+      "required": ["source_currency", "destination_currency"]
+    }
+  },
+  "required": ["headers", "query"]
+}

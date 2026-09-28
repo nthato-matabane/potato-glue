@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Validate Transfer Request",
+  "description": "Transfer to validate before executing it. The body is a strict whitelist - fields not listed here are rejected with 400.",
+  "type": "object",
+  "properties": {
+    "headers": {
+      "type": "object",
+      "properties": {
+        "Deriv-App-ID": {
+          "type": "string",
+          "description": "Application identifier. Required for Personal Access Token (PAT) authentication; not required for OAuth Bearer tokens."
+        },
+        "Authorization": {
+          "type": "string",
+          "description": "Bearer token for authentication",
+          "example": "Bearer YOUR_AUTH_TOKEN"
+        },
+        "Content-Type": {
+          "type": "string",
+          "enum": ["application/json"],
+          "description": "Content type"
+        }
+      },
+      "required": ["Deriv-App-ID", "Authorization", "Content-Type"]
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "enum": ["main", "p2p", "platform", "payment_agent"],
+          "description": "Type of the source account."
+        },
+        "destination_type": {
+          "type": "string",
+          "enum": ["main", "p2p", "platform", "payment_agent"],
+          "description": "Type of the destination account."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "Identifier of the source account: the wallet UUID, or the platform account ID such as MTR5312343 when source_type is platform.",
+          "example": "942a2f2d-1f33-4559-994e-42b403033bc6"
+        },
+        "destination_id": {
+          "type": "string",
+          "description": "Identifier of the destination account: the wallet UUID, or the platform account ID such as MTR5312343 when destination_type is platform.",
+          "example": "ef4b3abd-c05e-42ea-a3f2-021ec69e1580"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "Transfer amount as a decimal string, zero or greater.",
+          "example": "100.00"
+        },
+        "balance": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "Current spendable balance of the source account, in source_currency. Same format as amount. Used to check the account holds enough funds.",
+          "example": "250.00"
+        },
+        "source_currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency code of the source account.",
+          "example": "USD"
+        },
+        "destination_currency": {
+          "type": "string",
+          "pattern": "^[A-Z0-9_]{1,18}$",
+          "description": "Currency code of the destination account.",
+          "example": "BTC"
+        },
+        "rate": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "Exchange rate as a positive decimal string. Required when source_currency and destination_currency differ; omit otherwise.",
+          "example": "0.92"
+        },
+        "source_platform_name": {
+          "type": "string",
+          "enum": [
+            "mt5",
+            "ctrader",
+            "options",
+            "crypto-exchange",
+            "tradingview"
+          ],
+          "description": "Platform name. Send when source_type is platform."
+        },
+        "destination_platform_name": {
+          "type": "string",
+          "enum": [
+            "mt5",
+            "ctrader",
+            "options",
+            "crypto-exchange",
+            "tradingview"
+          ],
+          "description": "Platform name. Send when destination_type is platform."
+        }
+      },
+      "required": [
+        "source_type",
+        "destination_type",
+        "source_id",
+        "destination_id",
+        "amount",
+        "balance",
+        "source_currency",
+        "destination_currency"
+      ]
+    }
+  },
+  "required": ["headers", "body"]
+}

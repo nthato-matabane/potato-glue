@@ -33,8 +33,8 @@ def _sigmoid(z: np.ndarray | float):
 class OnlineSpikeModel:
     def __init__(self, d: int, horizon: int, lr: float = 0.09,
                  l2: float = 1e-4, pos_clip: tuple[float, float] = (1.0, 50.0),
-                 replay_size: int = 4000, replay_every: int = 250,
-                 replay_batch: int = 1500, seed: int = 7):
+                 replay_size: int = 4000, replay_every: int = 400,
+                 replay_batch: int = 600, seed: int = 7):
         self.d = d
         self.horizon = horizon
         self.lr = lr

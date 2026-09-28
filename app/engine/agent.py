@@ -232,9 +232,26 @@ class SymbolBrain:
     # ---- core pipeline ----------------------------------------------------
 
     def warm(self, ticks: list[tuple[float, float]]) -> None:
-        """Feed history through the full pipeline (learning + paper trading)."""
+        """Feed history through the full pipeline (learning + paper trading).
+
+        Synchronous — fine for tools/backtests. The server uses warm_async.
+        """
         for epoch, price in ticks:
             self._step(price, epoch)
+
+    async def warm_async(self, ticks: list[tuple[float, float]],
+                         chunk: int = 800) -> None:
+        """Same as warm(), but yields to the event loop every `chunk` ticks.
+
+        On tiny free hosts (0.1 CPU) a synchronous 4,000-tick warm-up
+        blocks the web server long enough for the platform health check
+        to fail and the container to restart — a crash loop. Chunking
+        keeps health checks green while learning happens.
+        """
+        for i in range(0, len(ticks), chunk):
+            for epoch, price in ticks[i:i + chunk]:
+                self._step(price, epoch)
+            await asyncio.sleep(0)
 
     async def on_tick(self, price: float, epoch: float, hub: "AgentHub") -> None:
         await self._step_async(price, epoch, hub)
@@ -828,13 +845,13 @@ class AgentHub:
             cached = store.load_cached_ticks(sym, warmup)
             if len(cached) >= 500:
                 logger.info("%s: warming from cache (%d ticks)", sym, len(cached))
-                brain.warm(cached)
+                await brain.warm_async(cached)
             else:
                 logger.info("%s: fetching %d ticks of history...", sym, warmup)
                 ticks = await dclient.fetch_history(self.public, sym, warmup)
                 if ticks:
                     store.cache_ticks(sym, ticks[-8000:])
-                    brain.warm(ticks)
+                    await brain.warm_async(ticks)
                 else:
                     logger.warning("%s: no history available", sym)
 

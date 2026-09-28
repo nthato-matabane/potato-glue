@@ -84,14 +84,14 @@ DEFAULT_SETTINGS: dict = {
     "account_mode": "demo",       # demo | real
     "account_id": "",             # Options account (e.g. A1234...) — from OTP listing
     "symbols": DEFAULT_SYMBOLS,
-    "stake_usd": 5.0,             # margin per trade (min $1, max $500)
-    "multiplier": 100,
+    "stake_usd": 1.0,             # margin per trade (min $1, max $500)
+    "multiplier": 500,            # x500 = max profit per $1 when the EV gate passes
     "max_daily_loss_usd": 20.0,   # halt live trading for the day past this
     "max_consecutive_losses": 5,  # pause live trading after N losses in a row
     "pause_after_losses_min": 30,
     "daily_loss_pct": 10.0,       # % of balance — secondary circuit breaker
-    "stop_loss_pct": 40.0,        # exit position at -40% of margin (before stop-out)
-    "take_profit_pct": 60.0,      # exit at +60% of margin
+    "stop_loss_pct": 60.0,        # exit position at -60% of margin (before stop-out)
+    "take_profit_pct": 100.0,     # exit at +100% of margin (1:1 payoff at x500)
     "max_hold_ticks": 0,          # 0 = auto (derived from symbol interval)
     "entry_threshold": 0.50,      # min model confidence to enter (spike mode)
     "exit_threshold": 0.35,       # model confidence that forces exit (spike imminent)

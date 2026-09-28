@@ -831,7 +831,10 @@ class AgentHub:
             if sym:
                 self.pips[sym] = float(s.get("pip_size", 0.001) or 0.001)
 
-        # brains + warm-up (cache first for instant restarts)
+        # brains + warm-up (cache first for instant restarts).
+        # Slow symbols need proportionally more history: the hazard model
+        # needs ~10 spike gaps, and a 1000-interval symbol only spikes
+        # once per ~1000 ticks.
         symbols = list(self.settings.get("symbols", config.DEFAULT_SYMBOLS))
         for sym in symbols:
             if sym not in config.SYMBOL_META:
@@ -840,8 +843,10 @@ class AgentHub:
             brain.load_models()
             self.brains[sym] = brain
 
-        warmup = int(self.settings.get("warmup_ticks", 4000))
+        base_warm = int(self.settings.get("warmup_ticks", 4000))
         for sym, brain in self.brains.items():
+            interval = config.SYMBOL_META.get(sym, {}).get("avg_interval", 500)
+            warmup = max(base_warm, min(15000, int(interval * 18)))
             cached = store.load_cached_ticks(sym, warmup)
             if len(cached) >= 500:
                 logger.info("%s: warming from cache (%d ticks)", sym, len(cached))

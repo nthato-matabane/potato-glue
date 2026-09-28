@@ -55,8 +55,14 @@ class HazardEstimator:
 
     @property
     def entry_ready(self) -> bool:
-        """Enough intervals observed for EV/entry decisions to be trustworthy."""
-        return len(self.intervals) >= 15
+        """Enough intervals observed for EV/entry decisions to be trustworthy.
+
+        10 gaps balances safety vs. the slow 1000-series symbols: at ~1
+        spike per 1000 ticks, demanding 15 gaps would mean 15k+ ticks of
+        warm-up before the first trade ever fires. Below this, the EV
+        gate + auto mode still block bad entries.
+        """
+        return len(self.intervals) >= 10
 
     @property
     def regime_shift(self) -> bool:

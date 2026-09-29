@@ -54,6 +54,7 @@ class PaperPosition:
     entry_idx: int
     entry_epoch: float
     commission: float          # entry commission (usd)
+    pnl_peak_pct: float = 0.0  # highest open profit % since entry (trailing TP)
 
     def pnl_usd(self, px: float, exit_commission: bool = True) -> float:
         if self.side == "UP":
@@ -82,6 +83,7 @@ class LivePosition:
     entry_epoch: float
     commission: float = 0.0
     last_poc: dict = field(default_factory=dict)
+    pnl_peak_pct: float = 0.0  # highest open profit % since entry (trailing TP)
 
     @property
     def profit(self) -> float:
@@ -377,6 +379,8 @@ class SymbolBrain:
         for mode, pos in list(self.paper.items()):
             if not pos:
                 continue
+            peak = max(pos.pnl_peak_pct, pos.pnl_pct(price))
+            pos.pnl_peak_pct = peak
             exit_now, reason, urgency = strat.should_exit(
                 mode,
                 spike_now=spiked,
@@ -389,6 +393,7 @@ class SymbolBrain:
                 stop_loss_pct=sl,
                 take_profit_pct=tp,
                 lift_fast=lf,
+                pnl_peak_pct=peak,
             )
             # spike-mode outcomes depend on which way the spike went
             if mode == "spike" and spiked:
@@ -587,6 +592,8 @@ class SymbolBrain:
         lf = strat.lift(p_fast, H_FAST, self.mean_interval)
         pnl_pct = (pos.profit / max(pos.stake, 1e-9)) * 100.0
         spiked = self.labeler.age == 0     # a spike landed on this very tick
+        pnl_peak = max(pos.pnl_peak_pct, pnl_pct)
+        pos.pnl_peak_pct = pnl_peak
         exit_now, reason, _urgency = strat.should_exit(
             pos.mode,
             spike_now=spiked,
@@ -599,6 +606,7 @@ class SymbolBrain:
             stop_loss_pct=float(self.settings.get("stop_loss_pct", 40.0)),
             take_profit_pct=float(self.settings.get("take_profit_pct", 60.0)),
             lift_fast=lf,
+            pnl_peak_pct=pnl_peak,
         )
         if pos.mode == "spike" and spiked:
             ours = ((pos.side == "UP" and self.spike_dir > 0) or
@@ -866,6 +874,14 @@ class AgentHub:
                     logger.warning("%s: no history available — learning from "
                                    "live ticks only", sym)
 
+        # ONE-TIME MASS STUDY: read ~50k real ticks per symbol DIRECTLY from
+        # Deriv (chunked page reads, nothing stored locally) and push them
+        # through the learning pipeline. The brain pre-trains on the symbol's
+        # full recent history in minutes instead of trickling in knowledge
+        # over days. Runs once; afterwards live ticks keep it sharp.
+        if not store.load_settings().get("mass_study_done"):
+            await self._mass_study()
+
         # live stream
         for sym, brain in self.brains.items():
             await self.public.subscribe(
@@ -886,6 +902,40 @@ class AgentHub:
         store.log("info", f"agent running on {len(self.brains)} symbols")
         logger.info("AgentHub started (%d symbols, live=%s)",
                     len(self.brains), bool(self.settings.get("live_enabled")))
+
+    async def _mass_study(self) -> None:
+        """Deep pre-training on real history, straight from Deriv.
+
+        1000-tick pages with short pauses (server-friendly), fed to the
+        brains in yielding chunks (host-friendly). Nothing is cached —
+        the knowledge is distilled into the model weights and hazard
+        statistics, which ARE persisted. If anything fails the flag stays
+        unset and the study retries on next boot.
+        """
+        want = 50000
+        logger.info("[study] mass-learning begins (%d ticks per symbol, direct from Deriv)", want)
+        for sym, brain in list(self.brains.items()):
+            try:
+                ticks = await dclient.fetch_history(self.public, sym, want,
+                                                    page_pause=0.15)
+                if len(ticks) < 2000:
+                    logger.warning("[study] %s: only %d ticks available — skipped",
+                                   sym, len(ticks))
+                    continue
+                t0 = time.time()
+                await brain.warm_async(ticks, chunk=500)
+                brain.save_models()
+                logger.info("[study] %s: studied %d ticks (%d spikes) in %.0fs — "
+                            "models saved", sym, len(ticks),
+                            brain.counters["spikes"], time.time() - t0)
+                await asyncio.sleep(1.0)
+            except Exception as e:
+                logger.warning("[study] %s: interrupted (%s) — will retry next boot",
+                               sym, e)
+                return
+        store.save_setting("mass_study_done", time.time())
+        store.log("info", "mass study complete — brain pre-trained on full history")
+        logger.info("[study] complete — live trading with pre-trained brain")
 
     def _tick_handler(self, brain: SymbolBrain):
         async def handler(msg: dict) -> None:

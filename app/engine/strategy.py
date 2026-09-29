@@ -29,6 +29,14 @@ from statistics import mean
 # (stake x multiplier) per side. Used for paper fills and expectancy math.
 PAPER_COMMISSION_RATE = 0.00009
 
+# Trailing take-profit for drift rides: once the open profit crosses the
+# arm level, give back at most this fraction of the PEAK before exiting.
+# 0.35 means a peak of +100% exits at +65%; a peak of +1000% exits at +650%.
+# This is what lets a $1 drift ride make $10+ instead of capping at a
+# fixed target — the position follows the drift until just before the spike.
+DRIFT_TRAIL_GIVEBACK = 0.35
+DRIFT_TRAIL_ARM_PCT = 40.0     # profit % the ride must reach before trailing arms
+
 
 # ---------------------------------------------------------------------------
 # expected-value gate — never take a trade the measured maths can't pay for
@@ -112,7 +120,14 @@ def lift(p: float, horizon: int, mean_interval: float) -> float:
 def entry_drift(features: dict, p_fast: float, exit_threshold: float,
                 mean_interval: float, vol_ratio: float,
                 threshold: float = 0.30) -> Decision:
-    """Enter a drift trade only when a spike looks safely far away."""
+    """Enter a drift trade only when a spike looks safely far away.
+
+    RUNWAY rule (learned from 50k-tick studies): only enter in the FRESH
+    part of the spike cycle. A position opened mid-cycle gets surprised
+    by early spikes — the single biggest loss source. age_percentile is
+    0 right after a spike and 1 as the next one approaches; runway
+    declines linearly to zero at 50% of the typical interval.
+    """
     lf = lift(p_fast, 3, mean_interval)
     safe = 1.0 - min(lf / 2.0, 1.0)          # lift 2.0+ -> no safety left
     slope = features.get("slope50", 0.0)
@@ -120,11 +135,11 @@ def entry_drift(features: dict, p_fast: float, exit_threshold: float,
     aligned = min(abs(slope) / 0.5, 1.0) if slope * features.get("drift_sign", 1) > 0 else 0.0
     vol_ok = 1.0 if vol_ratio <= 2.0 else max(0.0, 1.0 - (vol_ratio - 2.0))
     age_pct = features.get("age_percentile", 0.0)
-    overdue = 1.0 - max(0.0, (age_pct - 0.6) / 0.4) * 0.5   # deep overdue = riskier
-    conf = safe * aligned * vol_ok * overdue
+    runway = max(0.0, 1.0 - age_pct / 0.5)   # fresh cycle = full runway
+    conf = safe * aligned * vol_ok * runway
     if conf >= threshold:
         return Decision("enter_drift", round(conf, 3),
-                        f"drift aligned, spike not imminent (lift={lf:.2f})")
+                        f"drift aligned, fresh cycle (runway={runway:.2f}, lift={lf:.2f})")
     return Decision("hold", round(conf, 3), "drift conditions not met")
 
 
@@ -149,7 +164,8 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
                 p_fast: float, mean_interval: float, ticks_held: int,
                 max_hold: int, exit_threshold: float,
                 stop_loss_pct: float, take_profit_pct: float,
-                lift_fast: float) -> tuple[bool, str, str]:
+                lift_fast: float,
+                pnl_peak_pct: float = 0.0) -> tuple[bool, str, str]:
     """
     Returns (exit?, reason, urgency) where urgency is
     'now' (sell immediately) or 'next' (normal close).
@@ -157,6 +173,15 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
     stop_loss_pct <= 0 disables the stop-loss entirely (user preference:
     entries are only taken when the EV gate proves spike risk is priced —
     the account-level 20% drawdown breaker is the real protection).
+
+    take_profit_pct <= 0 disables the fixed profit cap for drift rides:
+    instead a TRAILING exit follows the drift — once the open profit peaks
+    above DRIFT_TRAIL_ARM_PCT, the position only exits when it has given
+    back DRIFT_TRAIL_GIVEBACK of that peak (or when spike risk says go).
+    A $1 drift ride can therefore bank 5x, 10x, 20x its stake when the
+    drift runs long, instead of settling for a fraction.
+
+    pnl_peak_pct: highest open profit % seen since entry (caller tracks).
     """
     if pos_mode == "spike":
         if spike_now:
@@ -178,10 +203,16 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
         return True, "spike_hit", "now"          # late — minimise damage
     if stop_loss_pct > 0 and pnl_pct <= -stop_loss_pct:
         return True, "stop_loss", "now"
-    if pnl_pct >= take_profit_pct:
-        return True, "take_profit", "now"
     if p_fast >= exit_threshold:
         return True, "pre_spike_exit", "now"     # <-- the core rule
+    # profit taking: fixed cap (legacy, tp>0) or trailing ride (tp<=0)
+    if take_profit_pct > 0:
+        if pnl_pct >= take_profit_pct:
+            return True, "take_profit", "now"
+    else:
+        if pnl_peak_pct >= DRIFT_TRAIL_ARM_PCT and \
+                pnl_pct <= pnl_peak_pct * (1.0 - DRIFT_TRAIL_GIVEBACK):
+            return True, "trail_exit", "now"     # milked the move, bank it
     if ticks_held >= max_hold:
         return True, "max_hold", "next"
     return False, "", ""
@@ -193,36 +224,39 @@ def select_auto_mode(profits_drift: list[float], profits_spike: list[float],
                      settings: dict, current: str) -> tuple[str, str]:
     """
     Returns (mode, reason). mode is 'drift' | 'spike' | 'observe'.
-    Uses net paper profit-per-trade with hysteresis: switching requires
-    enough samples and a clear margin over the incumbent.
+
+    Each side is judged INDEPENDENTLY on its own recent expectancy: a side
+    starts trading as soon as IT has enough samples and they are net
+    positive — it must not wait for the other side to mature too (spike
+    entries are rare by nature, so pairing them stalls a paying side).
+    Switching between two eligible sides uses net expectancy with a margin.
     """
-    min_n = int(settings.get("auto_min_trades", 30))
+    min_n = int(settings.get("auto_min_trades", 15))
     margin = float(settings.get("auto_switch_margin", 0.20))
+    min_start = max(6, min_n // 2)           # samples to activate a side
 
     d = list(profits_drift)[-min_n:]
     s = list(profits_spike)[-min_n:]
+    d_mean = mean(d) if d else 0.0
+    s_mean = mean(s) if s else 0.0
+    d_ok = len(d) >= min_start and d_mean > 0
+    s_ok = len(s) >= min_start and s_mean > 0
 
-    if len(d) < min_n or len(s) < min_n:
-        return "observe", (f"gathering data (drift {len(d)}/{min_n}, "
-                           f"spike {len(s)}/{min_n})")
-
-    d_mean, s_mean = mean(d), mean(s)
-
-    if current in ("drift", "spike"):
-        cur, other = (d_mean, s_mean) if current == "drift" else (s_mean, d_mean)
-        if other > cur * (1.0 + margin) and other > 0:
-            new = "spike" if current == "drift" else "drift"
-            return new, f"switching: {new} pays better ({other:.4f} vs {cur:.4f})"
-        if cur <= 0 and other <= 0:
-            return "observe", "neither side positive — relearning"
-        return current, f"holding {current} ({cur:.4f} vs {other:.4f})"
-
-    # no incumbent — pick the positive one
-    if d_mean <= 0 and s_mean <= 0:
-        return "observe", "neither side positive — relearning"
-    pick = "drift" if d_mean >= s_mean else "spike"
-    best = max(d_mean, s_mean)
-    return pick, f"selected {pick} (expectancy {best:.4f}/trade)"
+    if d_ok and s_ok:
+        if current in ("drift", "spike"):
+            cur, other = (d_mean, s_mean) if current == "drift" else (s_mean, d_mean)
+            if other > cur * (1.0 + margin) and other > 0:
+                new = "spike" if current == "drift" else "drift"
+                return new, f"switching: {new} pays better ({other:.4f} vs {cur:.4f})"
+            return current, f"holding {current} ({cur:.4f} vs {other:.4f})"
+        pick = "drift" if d_mean >= s_mean else "spike"
+        return pick, f"selected {pick} (drift {d_mean:.4f} vs spike {s_mean:.4f})"
+    if d_ok:
+        return "drift", f"drift pays (avg {d_mean:+.4f}/trade over {len(d)})"
+    if s_ok:
+        return "spike", f"spike pays (avg {s_mean:+.4f}/trade over {len(s)})"
+    return "observe", (f"gathering data (drift {len(d)}/{min_start}, "
+                       f"spike {len(s)}/{min_start})")
 
 
 def multiplier_for(symbol_side: str) -> str:

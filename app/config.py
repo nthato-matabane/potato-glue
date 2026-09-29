@@ -110,7 +110,7 @@ DEFAULT_SETTINGS: dict = {
 FORCED_SETTINGS: dict = {
     "stake_usd": 1.0,
     "multiplier": 500,
-    "take_profit_pct": 100.0,
+    "take_profit_pct": 0.0,        # 0 = TRAILING profit ride (milks the drift)
     "stop_loss_pct": 0.0,          # 0 = NO stop-loss (drawdown gate protects instead)
     "daily_loss_pct": 20.0,        # stop trading for the day at -20% of balance
     "symbols": list(DEFAULT_SYMBOLS),

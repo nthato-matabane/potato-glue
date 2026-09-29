@@ -100,3 +100,13 @@ DEFAULT_SETTINGS: dict = {
     "warmup_ticks": 4000,         # historical ticks fetched at startup
     "min_balance_usd": 2.0,       # never trade below this balance
 }
+
+# Locked-in profit settings, re-applied on EVERY boot so the user never
+# has to touch the dashboard: $1 per trade, x500 leverage (maximum profit
+# per $1 whenever the EV gate approves), 1:1 payoff exits.
+FORCED_SETTINGS: dict = {
+    "stake_usd": 1.0,
+    "multiplier": 500,
+    "take_profit_pct": 100.0,
+    "stop_loss_pct": 60.0,
+}

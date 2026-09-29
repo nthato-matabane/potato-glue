@@ -843,22 +843,28 @@ class AgentHub:
             brain.load_models()
             self.brains[sym] = brain
 
+        # Warm-up strategy: history comes from OUR OWN tick cache (built
+        # live 24/7) first, so the heavy Deriv download happens ONLY on the
+        # very first boot. Live ticks keep appending to the cache forever.
         base_warm = int(self.settings.get("warmup_ticks", 4000))
         for sym, brain in self.brains.items():
             interval = config.SYMBOL_META.get(sym, {}).get("avg_interval", 500)
             warmup = max(base_warm, min(15000, int(interval * 18)))
             cached = store.load_cached_ticks(sym, warmup)
             if len(cached) >= 500:
-                logger.info("%s: warming from cache (%d ticks)", sym, len(cached))
+                logger.info("%s: warming from own cache (%d ticks) — no download",
+                            sym, len(cached))
                 await brain.warm_async(cached)
             else:
-                logger.info("%s: fetching %d ticks of history...", sym, warmup)
+                logger.info("%s: first boot — downloading %d ticks once...",
+                            sym, warmup)
                 ticks = await dclient.fetch_history(self.public, sym, warmup)
                 if ticks:
                     store.cache_ticks(sym, ticks[-8000:])
                     await brain.warm_async(ticks)
                 else:
-                    logger.warning("%s: no history available", sym)
+                    logger.warning("%s: no history available — learning from "
+                                   "live ticks only", sym)
 
         # live stream
         for sym, brain in self.brains.items():
@@ -1020,8 +1026,10 @@ class AgentHub:
                 await asyncio.sleep(60)
                 for brain in self.brains.values():
                     brain.save_models()
+                    # append fresh LIVE ticks to the cache: history grows
+                    # 24/7 from the stream, downloads never repeat
                     if brain.recent:
-                        store.cache_ticks(brain.symbol, list(brain.recent)[-8000:])
+                        store.cache_ticks(brain.symbol, list(brain.recent)[-300:])
             except asyncio.CancelledError:
                 raise
             except Exception as e:

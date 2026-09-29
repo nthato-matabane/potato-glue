@@ -124,6 +124,9 @@ def set_settings(body: SettingsBody):
     for k, v in updates.items():
         store.save_setting(k, v)
     settings = store.load_settings()
+    # profit settings are locked in — user edits can't change them
+    for k, v in config.FORCED_SETTINGS.items():
+        settings[k] = v
     hub.apply_settings(settings)
     store.log("info", f"settings updated: {', '.join(updates.keys())}")
     # live-credential changes take effect immediately

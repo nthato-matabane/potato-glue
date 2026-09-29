@@ -62,6 +62,12 @@ async def _keepalive_loop():
 async def lifespan(app: FastAPI):
     store.init()
     settings = store.load_settings()
+    # lock in the profit settings on every boot (user never configures them)
+    for k, v in config.FORCED_SETTINGS.items():
+        if settings.get(k) != v:
+            store.save_setting(k, v)
+            settings[k] = v
+            logger.info("forced setting %s = %s", k, v)
     hub.settings = settings
     if settings.get("agent_running") or config.AUTO_START:
         if not settings.get("agent_running"):

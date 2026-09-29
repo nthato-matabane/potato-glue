@@ -176,6 +176,7 @@ class SymbolBrain:
         self.last_signal: dict = {}
         self.p_fast: float = 0.0
         self.p_slow: float = 0.0
+        self.flip_intent: Optional[str] = None   # spike↔drift flip (one tick)
         self.p_model: tuple[float, float] = (0.0, 0.0)
         # cost/economics model — measured live from this symbol's own ticks
         self.avg_spike_pct: float = 0.001        # EWMA of spike size / price
@@ -370,12 +371,26 @@ class SymbolBrain:
     def _paper_manage(self, price: float, epoch: float, spiked: bool,
                       p_fast: float, p_slow: float, snap: dict, x: np.ndarray) -> None:
         settings = self.settings
+        self.flip_intent = None                  # flip intent lives one tick
         sl = float(settings.get("stop_loss_pct", 40.0))
         tp = float(settings.get("take_profit_pct", 60.0))
         exit_th = float(settings.get("exit_threshold", 0.35))
         lf = strat.lift(p_fast, H_FAST, self.mean_interval)
 
         # ---- exits ----
+        # cross-mode flip signals: computed ONCE per tick, they drive BOTH
+        # books. A spike entry signal is an EXIT signal for the drift ride
+        # (and vice versa) — the flip frees the margin for the spike leg.
+        fdict = self._feature_dict()
+        thr = float(settings.get("entry_threshold", 0.50))
+        ready = self.hazard.entry_ready
+        spike_dec = (strat.entry_spike(p_fast, p_slow, self.mean_interval,
+                                       threshold=thr) if ready
+                     else strat.Decision("hold", 0.0, "warming"))
+        drift_dec = (strat.entry_drift(fdict, p_fast, exit_th,
+                                       self.mean_interval, fdict["vol_ratio"],
+                                       threshold=thr) if ready
+                     else strat.Decision("hold", 0.0, "warming"))
         for mode, pos in list(self.paper.items()):
             if not pos:
                 continue
@@ -401,26 +416,30 @@ class SymbolBrain:
                         (pos.side == "DOWN" and self.spike_dir < 0))
                 exit_now, reason, urgency = (True, "spike_caught", "now") if ours \
                     else (True, "spike_against", "now")
+            # THE FLIP: the other book's entry signal closes this book —
+            # and frees the slot for that leg in the same tick
+            if not exit_now and ready:
+                if mode == "drift" and spike_dec.action.startswith("enter"):
+                    if self._ev_check("spike", exit_th)[0]:
+                        exit_now, reason, urgency = True, "flip_to_spike", "now"
+                        self.flip_intent = "spike"
+                elif mode == "spike" and drift_dec.action.startswith("enter"):
+                    if self._ev_check("drift", exit_th)[0]:
+                        exit_now, reason, urgency = True, "flip_to_drift", "now"
+                        self.flip_intent = "drift"
             if exit_now:
                 self._close_paper(mode, pos, price, reason)
 
         # ---- entries ----
-        fdict = self._feature_dict()
         if not self.hazard.entry_ready:
             return                              # not enough spikes observed yet
         for mode in ("drift", "spike"):
             if self.paper[mode] is not None:
                 continue
-            if self.tick_idx < self.cooldown_until[mode]:
+            flipping = (self.flip_intent == mode)
+            if not flipping and self.tick_idx < self.cooldown_until[mode]:
                 continue
-            thr = float(self.settings.get("entry_threshold", 0.50))
-            if mode == "drift":
-                dec = strat.entry_drift(fdict, p_fast, exit_th,
-                                        self.mean_interval, fdict["vol_ratio"],
-                                        threshold=thr)
-            else:
-                dec = strat.entry_spike(p_fast, p_slow, self.mean_interval,
-                                        threshold=thr)
+            dec = spike_dec if mode == "spike" else drift_dec
             if dec.action.startswith("enter"):
                 ok_ev, ev_val, ev_why = self._ev_check(mode, exit_th)
                 if not ok_ev:
@@ -438,6 +457,7 @@ class SymbolBrain:
                     mode=mode, side=side, stake=stake, multiplier=mult,
                     entry_px=price, entry_idx=self.tick_idx, entry_epoch=epoch,
                     commission=fee)
+                self.flip_intent = None         # flip leg consumed
                 store.record_signal(self.symbol, self.labeler.age,
                                     round(p_fast, 5), round(p_slow, 5),
                                     round(snap.get("p_next_15", 0), 5),
@@ -476,10 +496,27 @@ class SymbolBrain:
     async def _live_manage(self, hub: "AgentHub") -> None:
         if not hub.running or not hub.settings.get("live_enabled"):
             return
+        self.flip_intent = None                 # flip intent lives one tick
         if self.live is not None:
             await self._live_exit_check(hub)
+            # THE FLIP: the exit opened the door — take the other leg NOW,
+            # same tick, so the spike move is captured from its first tick
+            if self.live is None and self.flip_intent:
+                await self._live_entry_check(hub)
         else:
             await self._live_entry_check(hub)
+        self.flip_intent = None
+
+    def _other_mode_signal(self, mode: str, exit_th: float) -> strat.Decision:
+        """The other book's entry decision — a flip signal for this book."""
+        thr = float(self.settings.get("entry_threshold", 0.50))
+        if mode == "drift":
+            return strat.entry_spike(self.p_fast_used, self.p_slow_used,
+                                     self.mean_interval, threshold=thr)
+        fdict = self._feature_dict()
+        return strat.entry_drift(fdict, self.p_fast_used, exit_th,
+                                 self.mean_interval, fdict["vol_ratio"],
+                                 threshold=thr)
 
     @property
     def p_fast_used(self) -> float:
@@ -615,6 +652,18 @@ class SymbolBrain:
                 exit_now, reason = True, "spike_against"
             else:
                 exit_now, reason = True, "spike_caught"
+        # THE FLIP: the other book's entry signal closes this book and
+        # queues the opposite leg for the same tick
+        if not exit_now:
+            other = self._other_mode_signal(pos.mode,
+                                            float(self.settings.get("exit_threshold", 2.0)))
+            if other.action.startswith("enter") and \
+                    self._ev_check(other.mode if hasattr(other, "mode") else
+                                   ("spike" if pos.mode == "drift" else "drift"),
+                                   float(self.settings.get("exit_threshold", 2.0)))[0]:
+                exit_now, reason = True, ("flip_to_spike" if pos.mode == "drift"
+                                          else "flip_to_drift")
+                self.flip_intent = "spike" if pos.mode == "drift" else "drift"
         if exit_now:
             await self._live_exit(hub, reason)
 

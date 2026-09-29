@@ -85,6 +85,25 @@ def health():
     return {"ok": True, "ts": time.time()}
 
 
+@router.post("/memory/backup", dependencies=[Depends(require_auth)])
+def memory_backup():
+    """Push the agent's memory (brain + trades) to the GitHub snapshot."""
+    from . import notebook
+
+    if not notebook.available():
+        return {"ok": False, "error": "no GITHUB_TOKEN configured"}
+    ok = notebook.push_snapshot()
+    return {"ok": ok}
+
+
+@router.get("/memory/export", dependencies=[Depends(require_auth)])
+def memory_export():
+    """Download the whole notebook (trades, equity, brain) as a file."""
+    from fastapi.responses import FileResponse
+
+    return FileResponse(config.DB_PATH, filename="spike_agent_memory.db")
+
+
 def _masked_settings() -> dict:
     s = store.load_settings()
     s["deriv_pat"] = "***" if s.get("deriv_pat") else ""

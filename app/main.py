@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config, store
 from .api import router
 from .engine.agent import hub
+from . import notebook
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,6 +61,8 @@ async def _keepalive_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # permanent memory: pull the latest snapshot BEFORE the store opens
+    notebook.restore_if_available()
     store.init()
     settings = store.load_settings()
     # lock in the profit settings on every boot (user never configures them)

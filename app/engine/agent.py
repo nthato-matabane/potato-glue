@@ -1136,6 +1136,10 @@ class AgentHub:
                     # 24/7 from the stream, downloads never repeat
                     if brain.recent:
                         store.cache_ticks(brain.symbol, list(brain.recent)[-300:])
+                # permanent memory: mirror the notebook to GitHub (no-op
+                # when the token isn't present, e.g. local runs)
+                from .. import notebook
+                notebook.push_snapshot()
             except asyncio.CancelledError:
                 raise
             except Exception as e:

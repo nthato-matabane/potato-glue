@@ -23,5 +23,7 @@ services:
         value: "true"
       - key: KEEPALIVE_URL
         value: https://spike-agent-91yd.onrender.com/api/health
+      - key: GITHUB_TOKEN
+        sync: false   # paste a GitHub token (Contents: read+write on this repo) — gives the bot permanent memory
       - key: ACCESS_PASSWORD
         sync: false        # set this in the Render dashboard before first login

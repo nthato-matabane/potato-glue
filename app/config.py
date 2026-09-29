@@ -113,5 +113,6 @@ FORCED_SETTINGS: dict = {
     "take_profit_pct": 0.0,        # 0 = TRAILING profit ride (milks the drift)
     "stop_loss_pct": 0.0,          # 0 = NO stop-loss (drawdown gate protects instead)
     "daily_loss_pct": 20.0,        # stop trading for the day at -20% of balance
+    "entry_threshold": 0.50,       # selective, high-conviction entries
     "symbols": list(DEFAULT_SYMBOLS),
 }

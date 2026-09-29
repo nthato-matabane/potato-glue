@@ -22,6 +22,6 @@ services:
       - key: AUTO_START
         value: "true"
       - key: KEEPALIVE_URL
-        sync: false        # optional: https://<your-service>.onrender.com/api/health
+        value: https://spike-agent-91yd.onrender.com/api/health
       - key: ACCESS_PASSWORD
         sync: false        # set this in the Render dashboard before first login

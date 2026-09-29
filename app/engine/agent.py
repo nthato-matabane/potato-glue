@@ -849,7 +849,7 @@ class AgentHub:
         base_warm = int(self.settings.get("warmup_ticks", 4000))
         for sym, brain in self.brains.items():
             interval = config.SYMBOL_META.get(sym, {}).get("avg_interval", 500)
-            warmup = max(base_warm, min(15000, int(interval * 18)))
+            warmup = max(base_warm, min(6000, int(interval * 12)))
             cached = store.load_cached_ticks(sym, warmup)
             if len(cached) >= 500:
                 logger.info("%s: warming from own cache (%d ticks) — no download",

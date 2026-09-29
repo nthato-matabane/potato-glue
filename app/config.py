@@ -48,9 +48,12 @@ PORT: int = int(_env("PORT", "8000"))
 DATA_DIR: Path = Path(_env("DATA_DIR", "./data"))
 DB_PATH: Path = DATA_DIR / "spike_agent.db"
 
-# ---- Tradable universe (user picked the fast pair + majors) --------------
-DEFAULT_SYMBOLS: list[str] = ["BOOM1000", "CRASH1000", "BOOM500", "CRASH500",
-                              "BOOM150N", "CRASH150N"]
+# ---- Tradable universe ----------------------------------------------------
+# TWO symbols by default — one Boom + one Crash is exactly what the strategy
+# needs (buys on Boom, sells on Crash). The free hosts (0.1 CPU) crash-loop
+# with 6 symbols warming up; 2 keeps the same brain quality per symbol.
+# You can add more symbols later from the settings page if you upgrade hosts.
+DEFAULT_SYMBOLS: list[str] = ["BOOM500", "CRASH500"]
 
 SYMBOL_META: dict[str, dict] = {
     # average ticks between spikes is the documented name-number for most
@@ -109,4 +112,5 @@ FORCED_SETTINGS: dict = {
     "multiplier": 500,
     "take_profit_pct": 100.0,
     "stop_loss_pct": 60.0,
+    "symbols": list(DEFAULT_SYMBOLS),
 }

@@ -87,32 +87,34 @@ DEFAULT_SETTINGS: dict = {
     "account_mode": "demo",       # demo | real
     "account_id": "",             # Options account (e.g. A1234...) — from OTP listing
     "symbols": DEFAULT_SYMBOLS,
-    "stake_usd": 1.0,             # margin per trade (min $1, max $500)
+    "stake_usd": 1.0,             # margin per trade (works on a $5 account)
     "multiplier": 500,            # x500 = max profit per $1 when the EV gate passes
-    "max_daily_loss_usd": 20.0,   # halt live trading for the day past this
-    "max_consecutive_losses": 5,  # pause live trading after N losses in a row
+    "max_daily_loss_usd": 20.0,   # absolute-dollar halt (safety net only)
+    "max_consecutive_losses": 0,  # 0 = off — the brain's gates manage risk
     "pause_after_losses_min": 30,
-    "daily_loss_pct": 10.0,       # % of balance — secondary circuit breaker
-    "stop_loss_pct": 60.0,        # exit position at -60% of margin (before stop-out)
-    "take_profit_pct": 100.0,     # exit at +100% of margin (1:1 payoff at x500)
+    "daily_loss_pct": 20.0,       # % of balance — drawdown breaker
+    "stop_loss_pct": 60.0,        # (forced to 0 below — no per-trade stop)
+    "take_profit_pct": 100.0,     # (forced to 0 below — trailing ride)
     "max_hold_ticks": 0,          # 0 = auto (derived from symbol interval)
     "entry_threshold": 0.50,      # min model confidence to enter (spike mode)
-    "exit_threshold": 0.35,       # model confidence that forces exit (spike imminent)
+    "exit_threshold": 2.0,        # pre-spike exit: bail when spike risk is 2x baseline
     "auto_min_trades": 15,        # paper trades per mode before auto picks a side
     "auto_switch_margin": 0.20,   # switch modes only if other side is 20% better
     "warmup_ticks": 4000,         # historical ticks fetched at startup
-    "min_balance_usd": 2.0,       # never trade below this balance
+    "min_balance_usd": 1.0,       # never trade below this balance
 }
 
 # Locked-in profit settings, re-applied on EVERY boot so the user never
 # has to touch the dashboard: $1 per trade, x500 leverage (maximum profit
 # per $1 whenever the EV gate approves), 1:1 payoff exits.
 FORCED_SETTINGS: dict = {
-    "stake_usd": 1.0,
+    "stake_usd": 1.0,              # $1 drift candles; works on a $5 account
     "multiplier": 500,
     "take_profit_pct": 0.0,        # 0 = TRAILING profit ride (milks the drift)
-    "stop_loss_pct": 0.0,          # 0 = NO stop-loss (drawdown gate protects instead)
+    "stop_loss_pct": 0.0,          # 0 = NO stop-loss
     "daily_loss_pct": 20.0,        # stop trading for the day at -20% of balance
     "entry_threshold": 0.50,       # selective, high-conviction entries
+    "exit_threshold": 2.0,         # pre-spike exit: bail at 2x baseline risk
+    "max_consecutive_losses": 0,   # 0 = off — brain's gates manage risk
     "symbols": list(DEFAULT_SYMBOLS),
 }

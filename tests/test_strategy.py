@@ -42,10 +42,11 @@ def test_spike_entry_needs_lift():
 
 
 def test_pre_spike_exit_fires_first_for_drift_position():
+    # exit_threshold is a LIFT multiple: bail when spike risk is 2x baseline
     exit_now, reason, urg = strat.should_exit(
         "drift", spike_now=False, pnl_pct=1.0, p_fast=0.40,
         mean_interval=MEAN, ticks_held=50, max_hold=800,
-        exit_threshold=0.35, stop_loss_pct=40, take_profit_pct=60,
+        exit_threshold=2.0, stop_loss_pct=40, take_profit_pct=60,
         lift_fast=2.5)
     assert exit_now and reason == "pre_spike_exit" and urg == "now"
 

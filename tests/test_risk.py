@@ -57,8 +57,8 @@ def test_consecutive_loss_pause_persists(tmp_path):
 def test_stake_sizing(tmp_path):
     rm = _fresh(tmp_path)
     assert rm.stake_for(1000.0) == 5.0            # configured stake
-    assert rm.stake_for(50.0) == 2.5              # capped at 5% of balance
-    assert rm.stake_for(2.5) == 0.0               # would break min balance
+    assert rm.stake_for(5.0) == 5.0               # works on a $5 account
+    assert rm.stake_for(2.0) == 0.0               # would break min balance
     big = _fresh(tmp_path, stake_usd=5000.0)
     assert big.stake_for(10_000.0) == 500.0       # exchange max
 

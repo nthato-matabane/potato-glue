@@ -81,7 +81,8 @@ class RiskManager:
                 return False, (f"drawdown breaker: -{abs(self.daily_profit):.2f} "
                                f"= {abs(self.daily_profit)/balance*100:.1f}% of balance")
 
-        if self.consecutive_losses >= int(self.settings.get("max_consecutive_losses", 5)):
+        max_losses = int(self.settings.get("max_consecutive_losses", 0) or 0)
+        if max_losses > 0 and self.consecutive_losses >= max_losses:
             return False, f"{self.consecutive_losses} consecutive losses"
         return True, "ok"
 
@@ -89,7 +90,8 @@ class RiskManager:
         self.refresh()
         if profit <= 0:
             self.consecutive_losses += 1
-            if self.consecutive_losses >= int(self.settings.get("max_consecutive_losses", 5)):
+            max_losses = int(self.settings.get("max_consecutive_losses", 0) or 0)
+            if max_losses > 0 and self.consecutive_losses >= max_losses:
                 mins = int(self.settings.get("pause_after_losses_min", 30))
                 store.save_setting("paused_until",
                                    time.time() + mins * 60)
@@ -99,12 +101,16 @@ class RiskManager:
     # ---- sizing ------------------------------------------------------------
 
     def stake_for(self, balance: float) -> float:
+        """Configured stake, sized for small accounts ($5 and up).
+
+        No %-of-balance cap: the agent's edge gates (EV + conviction +
+        auto mode) decide entries, not position sizing. The only guard
+        is keeping the account above its minimum after the stake.
+        """
         s = self.settings
-        stake = float(s.get("stake_usd", 5.0))
-        stake = max(MIN_STAKE, min(stake, MAX_STAKE))
-        if balance:
-            # never risk more than 5% of balance on one position
-            stake = min(stake, max(MIN_STAKE, balance * 0.05))
-            if balance - stake < float(s.get("min_balance_usd", 2.0)):
-                return 0.0
+        stake = max(MIN_STAKE, min(float(s.get("stake_usd", 1.0)), MAX_STAKE))
+        # full margin allowed: block only when the balance can't post the
+        # stake itself (user runs small accounts deliberately)
+        if balance and balance < stake:
+            return 0.0
         return round(stake, 2)

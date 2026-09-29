@@ -203,7 +203,10 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
         return True, "spike_hit", "now"          # late — minimise damage
     if stop_loss_pct > 0 and pnl_pct <= -stop_loss_pct:
         return True, "stop_loss", "now"
-    if p_fast >= exit_threshold:
+    # pre-spike exit: exit_threshold is a LIFT multiple (spike risk N× the
+    # baseline). A raw probability can never reach 0.35 on a 3-tick window
+    # (base rate ~0.006), which silently disabled this rule forever.
+    if exit_threshold > 1.0 and lift_fast >= exit_threshold:
         return True, "pre_spike_exit", "now"     # <-- the core rule
     # profit taking: fixed cap (legacy, tp>0) or trailing ride (tp<=0)
     if take_profit_pct > 0:

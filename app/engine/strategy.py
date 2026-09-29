@@ -153,11 +153,15 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
     """
     Returns (exit?, reason, urgency) where urgency is
     'now' (sell immediately) or 'next' (normal close).
+
+    stop_loss_pct <= 0 disables the stop-loss entirely (user preference:
+    entries are only taken when the EV gate proves spike risk is priced —
+    the account-level 20% drawdown breaker is the real protection).
     """
     if pos_mode == "spike":
         if spike_now:
             return True, "spike_caught", "now"
-        if pnl_pct <= -stop_loss_pct:
+        if stop_loss_pct > 0 and pnl_pct <= -stop_loss_pct:
             return True, "stop_loss", "now"
         if pnl_pct >= take_profit_pct:
             return True, "take_profit", "now"
@@ -172,7 +176,7 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
     # drift position: getting out BEFORE the spike is the whole point
     if spike_now:
         return True, "spike_hit", "now"          # late — minimise damage
-    if pnl_pct <= -stop_loss_pct:
+    if stop_loss_pct > 0 and pnl_pct <= -stop_loss_pct:
         return True, "stop_loss", "now"
     if pnl_pct >= take_profit_pct:
         return True, "take_profit", "now"

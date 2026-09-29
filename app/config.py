@@ -98,7 +98,7 @@ DEFAULT_SETTINGS: dict = {
     "max_hold_ticks": 0,          # 0 = auto (derived from symbol interval)
     "entry_threshold": 0.50,      # min model confidence to enter (spike mode)
     "exit_threshold": 0.35,       # model confidence that forces exit (spike imminent)
-    "auto_min_trades": 30,        # paper trades per mode before auto picks a side
+    "auto_min_trades": 15,        # paper trades per mode before auto picks a side
     "auto_switch_margin": 0.20,   # switch modes only if other side is 20% better
     "warmup_ticks": 4000,         # historical ticks fetched at startup
     "min_balance_usd": 2.0,       # never trade below this balance
@@ -111,6 +111,7 @@ FORCED_SETTINGS: dict = {
     "stake_usd": 1.0,
     "multiplier": 500,
     "take_profit_pct": 100.0,
-    "stop_loss_pct": 60.0,
+    "stop_loss_pct": 0.0,          # 0 = NO stop-loss (drawdown gate protects instead)
+    "daily_loss_pct": 20.0,        # stop trading for the day at -20% of balance
     "symbols": list(DEFAULT_SYMBOLS),
 }

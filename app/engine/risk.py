@@ -75,10 +75,11 @@ class RiskManager:
         if self.daily_profit <= -max_loss:
             return False, f"daily loss limit hit ({self.daily_profit:.2f})"
 
-        daily_pct_cap = float(self.settings.get("daily_loss_pct", 10.0))
+        daily_pct_cap = float(self.settings.get("daily_loss_pct", 20.0))
         if balance > 0 and self.daily_profit < 0:
             if abs(self.daily_profit) / balance * 100.0 >= daily_pct_cap:
-                return False, f"daily % loss limit hit ({self.daily_profit:.2f})"
+                return False, (f"drawdown breaker: -{abs(self.daily_profit):.2f} "
+                               f"= {abs(self.daily_profit)/balance*100:.1f}% of balance")
 
         if self.consecutive_losses >= int(self.settings.get("max_consecutive_losses", 5)):
             return False, f"{self.consecutive_losses} consecutive losses"

@@ -906,35 +906,42 @@ class AgentHub:
     async def _mass_study(self) -> None:
         """Deep pre-training on real history, straight from Deriv.
 
-        1000-tick pages with short pauses (server-friendly), fed to the
-        brains in yielding chunks (host-friendly). Nothing is cached —
-        the knowledge is distilled into the model weights and hazard
-        statistics, which ARE persisted. If anything fails the flag stays
-        unset and the study retries on next boot.
+        Sized for tiny free hosts: ~20k ticks per symbol, fetched in
+        1000-tick pages (server-friendly) and LEARNED in 400-tick slices
+        with pauses between them, so the CPU duty cycle stays low and the
+        web server / health checks never starve. Nothing is cached — the
+        knowledge distils into the model weights and hazard statistics,
+        which ARE persisted. Free hosts wipe the disk on redeploy, so the
+        study re-runs per boot; at this size that costs a few minutes of
+        gentle background work, not a crash.
         """
-        want = 50000
+        want = int(self.settings.get("study_ticks", 20000))
         logger.info("[study] mass-learning begins (%d ticks per symbol, direct from Deriv)", want)
         for sym, brain in list(self.brains.items()):
             try:
                 ticks = await dclient.fetch_history(self.public, sym, want,
-                                                    page_pause=0.15)
+                                                    page_pause=0.25)
                 if len(ticks) < 2000:
                     logger.warning("[study] %s: only %d ticks available — skipped",
                                    sym, len(ticks))
                     continue
                 t0 = time.time()
-                await brain.warm_async(ticks, chunk=500)
+                chunk, pause = 400, 0.45
+                for i in range(0, len(ticks), chunk):
+                    for epoch, price in ticks[i:i + chunk]:
+                        brain._step(price, epoch)
+                    await asyncio.sleep(pause)   # let the host breathe
                 brain.save_models()
                 logger.info("[study] %s: studied %d ticks (%d spikes) in %.0fs — "
                             "models saved", sym, len(ticks),
                             brain.counters["spikes"], time.time() - t0)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(1.5)
             except Exception as e:
                 logger.warning("[study] %s: interrupted (%s) — will retry next boot",
                                sym, e)
                 return
         store.save_setting("mass_study_done", time.time())
-        store.log("info", "mass study complete — brain pre-trained on full history")
+        store.log("info", "mass study complete — brain pre-trained on real history")
         logger.info("[study] complete — live trading with pre-trained brain")
 
     def _tick_handler(self, brain: SymbolBrain):

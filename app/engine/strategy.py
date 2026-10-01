@@ -119,7 +119,8 @@ def lift(p: float, horizon: int, mean_interval: float) -> float:
 
 def entry_drift(features: dict, p_fast: float, exit_threshold: float,
                 mean_interval: float, vol_ratio: float,
-                threshold: float = 0.30) -> Decision:
+                threshold: float = 0.30,
+                p_slow: float | None = None) -> Decision:
     """Enter a drift trade only when a spike looks safely far away.
 
     RUNWAY rule (learned from 50k-tick studies): only enter in the FRESH
@@ -127,9 +128,21 @@ def entry_drift(features: dict, p_fast: float, exit_threshold: float,
     by early spikes — the single biggest loss source. age_percentile is
     0 right after a spike and 1 as the next one approaches; runway
     declines linearly to zero at 50% of the typical interval.
+
+    p_slow (optional): the 15-tick learned probability. The slow horizon
+    is where the model's real skill lives (spikes announce themselves
+    ~15 ticks out on most cycles), so BOTH horizons must agree the coast
+    is clear — checking only the 3-tick window let spikes that were
+    already loading hit freshly-opened positions.
     """
     lf = lift(p_fast, 3, mean_interval)
-    safe = 1.0 - min(lf / 2.0, 1.0)          # lift 2.0+ -> no safety left
+    ls = lift(p_slow, 15, mean_interval) if p_slow is not None else lf
+    # hard block: EITHER horizon screaming => not safe (exit_threshold is
+    # a LIFT multiple, e.g. 2.0 = spike risk twice the baseline)
+    if exit_threshold > 1.0 and (lf >= exit_threshold or ls >= exit_threshold):
+        return Decision("hold", 0.0,
+                        f"spike risk high (lift fast={lf:.2f} slow={ls:.2f})")
+    safe = 1.0 - min(max(lf, ls) / 2.0, 1.0)   # worst horizon sets safety
     slope = features.get("slope50", 0.0)
     # drift direction: boom drifts DOWN (slope<0), crash drifts UP (slope>0)
     aligned = min(abs(slope) / 0.5, 1.0) if slope * features.get("drift_sign", 1) > 0 else 0.0
@@ -139,7 +152,8 @@ def entry_drift(features: dict, p_fast: float, exit_threshold: float,
     conf = safe * aligned * vol_ok * runway
     if conf >= threshold:
         return Decision("enter_drift", round(conf, 3),
-                        f"drift aligned, fresh cycle (runway={runway:.2f}, lift={lf:.2f})")
+                        f"drift aligned, fresh cycle (runway={runway:.2f}, "
+                        f"lift fast={lf:.2f} slow={ls:.2f})")
     return Decision("hold", round(conf, 3), "drift conditions not met")
 
 
@@ -165,7 +179,8 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
                 max_hold: int, exit_threshold: float,
                 stop_loss_pct: float, take_profit_pct: float,
                 lift_fast: float,
-                pnl_peak_pct: float = 0.0) -> tuple[bool, str, str]:
+                pnl_peak_pct: float = 0.0,
+                lift_slow: float | None = None) -> tuple[bool, str, str]:
     """
     Returns (exit?, reason, urgency) where urgency is
     'now' (sell immediately) or 'next' (normal close).
@@ -206,7 +221,11 @@ def should_exit(pos_mode: str, *, spike_now: bool, pnl_pct: float,
     # pre-spike exit: exit_threshold is a LIFT multiple (spike risk N× the
     # baseline). A raw probability can never reach 0.35 on a 3-tick window
     # (base rate ~0.006), which silently disabled this rule forever.
-    if exit_threshold > 1.0 and lift_fast >= exit_threshold:
+    # The slow horizon fires ~15 ticks before the fast one on most cycles,
+    # so either horizon tripping the line is reason to bail.
+    if exit_threshold > 1.0 and \
+            (lift_fast >= exit_threshold or
+             (lift_slow is not None and lift_slow >= exit_threshold)):
         return True, "pre_spike_exit", "now"     # <-- the core rule
     # profit taking: fixed cap (legacy, tp>0) or trailing ride (tp<=0)
     if take_profit_pct > 0:

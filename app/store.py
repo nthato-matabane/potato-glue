@@ -139,6 +139,27 @@ def save_setting(key: str, value: Any) -> None:
           (key, json.dumps(value)))
 
 
+def load_json(key: str, default: Any = None) -> Any:
+    """Read one JSON value from the settings table (None when absent)."""
+    rows = _query("SELECT value FROM settings WHERE key=?", (key,))
+    if not rows:
+        return default
+    try:
+        return json.loads(rows[0]["value"])
+    except Exception:
+        return default
+
+
+def save_json(key: str, value: Any) -> None:
+    save_setting(key, value)
+
+
+def last_model_save() -> float:
+    """Timestamp of the most recent learned-model save (0 = never)."""
+    rows = _query("SELECT MAX(updated) AS t FROM model_state")
+    return float(rows[0]["t"] or 0.0) if rows else 0.0
+
+
 # ---- trades / equity ------------------------------------------------------
 
 def record_trade(symbol: str, mode: str, side: str, live: bool, stake: float,

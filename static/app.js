@@ -108,7 +108,36 @@ async function refreshStatus() {
 
   renderSymbols(s.symbols || {}, s.last_signal || {});
   $("stat-trades").textContent = countLive(s.symbols || {});
+  renderLearning(s.learning, s.error);
   window._snap = s;
+}
+
+function renderLearning(learning, hubError) {
+  const el = $("learning-body");
+  if (!el) return;
+  if (!learning || !learning.symbols || !Object.keys(learning.symbols).length) {
+    el.innerHTML = `<div class="learn-row">${
+      hubError ? "⚠ " + hubError : "starting — no brain data yet"}</div>`;
+    return;
+  }
+  const rows = Object.entries(learning.symbols).map(([sym, L]) => {
+    const label = SYMBOL_META[sym] || sym;
+    const bestSkill = Math.max(L.fast_skill || 0, L.slow_skill || 0);
+    const skillTxt = bestSkill >= 0.2 ? `✅ sharp (score ${bestSkill.toFixed(2)}/1.0)`
+      : bestSkill >= 0.05 ? `⏳ warming up (score ${bestSkill.toFixed(2)}/1.0)`
+      : "⏳ studying…";
+    const memory = L.memory_ok
+      ? "✅ kept" + (learning.notebook_on ? " + backed up to GitHub ☁️" : " — add GITHUB_TOKEN on Render to survive redeploys ☁️")
+      : "⏳ still studying its first history";
+    const gaps = L.hazard_gaps || 0;
+    return `<div class="learn-row">
+      <b>${label}</b>
+      <span>studied <b>${(L.updates || 0).toLocaleString()}</b> lessons · seen <b>${L.spikes_seen || 0}</b> spikes · timing memory <b>${gaps}</b> spike gaps</span>
+      <span class="dim">prediction skill: ${skillTxt}</span>
+      <span class="dim">memory: ${memory}</span>
+    </div>`;
+  });
+  el.innerHTML = rows.join("");
 }
 
 function hms(sec) {

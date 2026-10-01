@@ -40,6 +40,19 @@ H_SLOW = 15
 TRADING_FEE_RATE = strat.PAPER_COMMISSION_RATE
 
 
+def blend_weight(n_updates: int, brier_skill: float) -> float:
+    """How much say the learned model gets vs the statistical prior (0..1).
+
+    Ramps in over the first ~800 labeled updates, then scales with the
+    model's demonstrated skill (Brier). A PROVEN model (skill >= ~0.3)
+    keeps the leading voice: capping it below ~0.75 rounds its timing
+    back to the baseline at every decision gate, which looked like
+    "the agent never learns". Weak models keep the prior in charge.
+    """
+    skill = min(max(brier_skill, 0.0) / 0.3, 1.0)
+    return min(n_updates / 800.0, 1.0) * (0.55 + 0.45 * skill)
+
+
 # ---------------------------------------------------------------------------
 # positions
 # ---------------------------------------------------------------------------
@@ -181,6 +194,7 @@ class SymbolBrain:
         # cost/economics model — measured live from this symbol's own ticks
         self.avg_spike_pct: float = 0.001        # EWMA of spike size / price
         self.drift_per_tick_pct: float = 1e-6    # EWMA of non-spike |move| / price
+        self.last_spike_pct: float = 0.001       # size of the most recent spike
         self.counters = {"spikes": 0, "paper_trades": 0, "live_trades": 0}
 
     # ---- configuration derived from learned stats -------------------------
@@ -211,6 +225,40 @@ class SymbolBrain:
 
     def update_settings(self, settings: dict) -> None:
         self.settings = settings
+
+    # ---- hazard persistence ----------------------------------------------
+
+    def hazard_to_dict(self) -> dict:
+        """Serialize the spike-timing statistics (the hazard estimator)."""
+        return {
+            "intervals": list(self.hazard.intervals),
+            "total_spikes": self.hazard.total_spikes,
+            "avg_spike_pct": self.avg_spike_pct,
+            "drift_per_tick_pct": self.drift_per_tick_pct,
+            "last_spike_pct": self.last_spike_pct,
+        }
+
+    def load_hazard(self) -> bool:
+        """Restore spike-timing stats from the store (True when restored)."""
+        blob = store.load_json(f"hazard:{self.symbol}")
+        if not isinstance(blob, dict):
+            return False
+        try:
+            iv = [int(t) for t in blob.get("intervals", []) if int(t) > 0]
+            self.hazard.intervals.clear()
+            for t in iv:                 # observe_interval appends + recomputes means
+                self.hazard.observe_interval(t)
+            self.hazard.total_spikes = int(blob.get("total_spikes", 0) or 0)
+            self.avg_spike_pct = float(blob.get("avg_spike_pct", 0.001) or 0.001)
+            self.drift_per_tick_pct = float(blob.get("drift_per_tick_pct", 1e-6) or 1e-6)
+            self.last_spike_pct = float(blob.get("last_spike_pct", 0.001) or 0.001)
+            return True
+        except Exception as e:
+            logger.warning("%s: hazard restore failed: %s", self.symbol, e)
+            return False
+
+    def save_hazard(self) -> None:
+        store.save_json(f"hazard:{self.symbol}", self.hazard_to_dict())
 
     def load_models(self) -> None:
         for key, model in (("fast", self.fast), ("slow", self.slow)):
@@ -277,6 +325,7 @@ class SymbolBrain:
         if event and price:
             a = 0.15
             self.avg_spike_pct = (1 - a) * self.avg_spike_pct + a * (event.size / price)
+            self.last_spike_pct = event.size / price
         elif prev_price and price:
             m = abs(price - prev_price) / price
             a = 0.02
@@ -301,14 +350,16 @@ class SymbolBrain:
         self.pipe_slow.settle(t, spiked)
 
         # learned probabilities, blended with the statistical hazard prior.
-        # Weight scales with demonstrated skill: a model that isn't beating
-        # the base-rate baseline gets no say (falls back to the prior).
+        # Weight scales with demonstrated skill, then TRUSTS the model:
+        # a skillful model (Brier skill >= ~0.2 on held-out-style rolling
+        # scores) gets the leading voice; the prior only fills the gaps and
+        # covers the model's early, unproven ticks. Capping a skillful
+        # model at 70% made learned timing arrive at every gate rounded
+        # down to the baseline — the visible symptom was "it never learns".
         m_fast = self.fast.predict(x)
         m_slow = self.slow.predict(x)
-        skill_f = min(max(self.fast.brier_skill, 0.0) / 0.2, 1.0)
-        skill_s = min(max(self.slow.brier_skill, 0.0) / 0.2, 1.0)
-        wf = min(self.fast.n_updates / 800.0, 1.0) * 0.7 * skill_f
-        ws = min(self.slow.n_updates / 800.0, 1.0) * 0.7 * skill_s
+        wf = blend_weight(self.fast.n_updates, self.fast.brier_skill)
+        ws = blend_weight(self.slow.n_updates, self.slow.brier_skill)
         p_fast = wf * m_fast + (1.0 - wf) * h_fast
         p_slow = ws * m_slow + (1.0 - ws) * h_slow
         self.p_fast, self.p_slow = p_fast, p_slow
@@ -376,6 +427,7 @@ class SymbolBrain:
         tp = float(settings.get("take_profit_pct", 60.0))
         exit_th = float(settings.get("exit_threshold", 0.35))
         lf = strat.lift(p_fast, H_FAST, self.mean_interval)
+        ls = strat.lift(p_slow, H_SLOW, self.mean_interval)
 
         # ---- exits ----
         # cross-mode flip signals: computed ONCE per tick, they drive BOTH
@@ -389,7 +441,7 @@ class SymbolBrain:
                      else strat.Decision("hold", 0.0, "warming"))
         drift_dec = (strat.entry_drift(fdict, p_fast, exit_th,
                                        self.mean_interval, fdict["vol_ratio"],
-                                       threshold=thr) if ready
+                                       threshold=thr, p_slow=p_slow) if ready
                      else strat.Decision("hold", 0.0, "warming"))
         for mode, pos in list(self.paper.items()):
             if not pos:
@@ -409,6 +461,7 @@ class SymbolBrain:
                 take_profit_pct=tp,
                 lift_fast=lf,
                 pnl_peak_pct=peak,
+                lift_slow=ls,
             )
             # spike-mode outcomes depend on which way the spike went
             if mode == "spike" and spiked:
@@ -516,7 +569,7 @@ class SymbolBrain:
         fdict = self._feature_dict()
         return strat.entry_drift(fdict, self.p_fast_used, exit_th,
                                  self.mean_interval, fdict["vol_ratio"],
-                                 threshold=thr)
+                                 threshold=thr, p_slow=self.p_slow_used)
 
     @property
     def p_fast_used(self) -> float:
@@ -547,7 +600,7 @@ class SymbolBrain:
             dec = strat.entry_drift(fdict, p_fast,
                                     float(self.settings.get("exit_threshold", 0.35)),
                                     self.mean_interval, fdict["vol_ratio"],
-                                    threshold=thr)
+                                    threshold=thr, p_slow=p_slow)
         else:
             dec = strat.entry_spike(p_fast, p_slow, self.mean_interval,
                                     threshold=thr)
@@ -627,6 +680,7 @@ class SymbolBrain:
             return
         p_fast = self.p_fast_used
         lf = strat.lift(p_fast, H_FAST, self.mean_interval)
+        ls = strat.lift(self.p_slow_used, H_SLOW, self.mean_interval)
         pnl_pct = (pos.profit / max(pos.stake, 1e-9)) * 100.0
         spiked = self.labeler.age == 0     # a spike landed on this very tick
         pnl_peak = max(pos.pnl_peak_pct, pnl_pct)
@@ -644,6 +698,7 @@ class SymbolBrain:
             take_profit_pct=float(self.settings.get("take_profit_pct", 60.0)),
             lift_fast=lf,
             pnl_peak_pct=pnl_peak,
+            lift_slow=ls,
         )
         if pos.mode == "spike" and spiked:
             ours = ((pos.side == "UP" and self.spike_dir > 0) or
@@ -746,6 +801,10 @@ class SymbolBrain:
 
     def snapshot(self) -> dict:
         px = self.last_price
+        fstat = self.fast.stats()
+        sstat = self.slow.stats()
+        wf = blend_weight(self.fast.n_updates, self.fast.brier_skill)
+        ws = blend_weight(self.slow.n_updates, self.slow.brier_skill)
         paper = {}
         for mode, pos in self.paper.items():
             paper[mode] = None if not pos else {
@@ -785,7 +844,13 @@ class SymbolBrain:
                             "avg": round(float(np.mean(dp)), 4) if dp else 0},
             "paper_spike": {"n": len(sp), "net": round(sum(sp), 3),
                             "avg": round(float(np.mean(sp)), 4) if sp else 0},
-            "models": {"fast": self.fast.stats(), "slow": self.slow.stats()},
+            "models": {"fast": fstat, "slow": sstat},
+            "hazard_gaps": len(self.hazard.intervals),
+            "model_weight": {"fast": round(wf, 3), "slow": round(ws, 3)},
+            "economics": {
+                "avg_spike_pct": round(self.avg_spike_pct, 5),
+                "drift_per_tick_pct": round(self.drift_per_tick_pct, 7),
+            },
             "regime_shift": self.hazard.regime_shift,
         }
 
@@ -898,6 +963,7 @@ class AgentHub:
                 continue
             brain = SymbolBrain(sym, self.pips.get(sym, 0.001), self.settings)
             brain.load_models()
+            brain.load_hazard()          # restore spike-timing memory
             self.brains[sym] = brain
 
         # Warm-up strategy: history comes from OUR OWN tick cache (built
@@ -952,6 +1018,33 @@ class AgentHub:
         logger.info("AgentHub started (%d symbols, live=%s)",
                     len(self.brains), bool(self.settings.get("live_enabled")))
 
+    def learning_snapshot(self) -> dict:
+        """Plain-English summary of what the agent has learned so far."""
+        symbols = {}
+        for sym, b in self.brains.items():
+            f, s = b.fast, b.slow
+            symbols[sym] = {
+                "updates": int(f.n_updates + s.n_updates),
+                "fast_skill": round(f.brier_skill, 3),
+                "slow_skill": round(s.brier_skill, 3),
+                "spikes_seen": int(b.counters["spikes"]),
+                "hazard_gaps": len(b.hazard.intervals),
+                "memory_ok": len(b.hazard.intervals) > 0 or f.n_updates > 0,
+            }
+        return {
+            "symbols": symbols,
+            "last_save": store.last_model_save(),
+            "notebook_on": notebook_available(),
+        }
+
+
+def notebook_available() -> bool:
+    try:
+        from .. import notebook
+        return notebook.available()
+    except Exception:
+        return False
+
     async def _mass_study(self) -> None:
         """Deep pre-training on real history, straight from Deriv.
 
@@ -981,6 +1074,7 @@ class AgentHub:
                         brain._step(price, epoch)
                     await asyncio.sleep(pause)   # let the host breathe
                 brain.save_models()
+                brain.save_hazard()
                 logger.info("[study] %s: studied %d ticks (%d spikes) in %.0fs — "
                             "models saved", sym, len(ticks),
                             brain.counters["spikes"], time.time() - t0)
@@ -1100,6 +1194,7 @@ class AgentHub:
                 if pos:
                     brain._close_paper(mode, pos, brain.last_price, "agent_stop")
             brain.save_models()
+            brain.save_hazard()
             if brain.recent:
                 store.cache_ticks(brain.symbol, list(brain.recent)[-8000:])
 
@@ -1132,6 +1227,7 @@ class AgentHub:
                 await asyncio.sleep(60)
                 for brain in self.brains.values():
                     brain.save_models()
+                    brain.save_hazard()      # spike-timing memory survives restarts
                     # append fresh LIVE ticks to the cache: history grows
                     # 24/7 from the stream, downloads never repeat
                     if brain.recent:
@@ -1163,6 +1259,7 @@ class AgentHub:
             "live_balance": self.live_balance,
             "currency": self.currency,
             "paper_balance": hub_paper_balance(),
+            "learning": self.learning_snapshot(),
             "mode": self.settings.get("mode", "auto"),
             "risk": {
                 "daily_profit": round(self.risk.daily_profit, 2),

@@ -69,6 +69,16 @@ main{max-width:1280px;margin:0 auto;padding:16px;display:flex;flex-direction:col
   padding:10px 14px;border-radius:10px;font-size:14px;
 }
 
+/* learning panel */
+.learning{display:flex;flex-direction:column;gap:8px}
+.learn-row{
+  display:grid;grid-template-columns:120px 1fr;gap:2px 12px;
+  font-size:13.5px;align-items:baseline;
+}
+.learn-row > b{font-size:14px}
+.learn-row > span:first-of-type{grid-column:2}
+.learn-row .dim{color:var(--dim);font-size:12.5px}
+
 /* symbol grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
 .card{

@@ -31,12 +31,25 @@ API = "https://api.github.com"
 
 
 def _repo_slug() -> str:
-    # Render provides the origin URL it deployed from
+    # Render sets RENDER_GIT_REPO_SLUG = "username/reponame" on every deploy
+    val = os.environ.get("RENDER_GIT_REPO_SLUG", "").strip().strip("/")
+    if val:
+        return val.replace(".git", "")
+    # Manual override, e.g. GITHUB_REPO=nthato-matabane/potato-glue
+    val = os.environ.get("GITHUB_REPO", "").strip().strip("/")
+    if val:
+        return val.replace(".git", "")
+    # Older Render variables / other hosts provide the full URL
     for key in ("RENDER_GIT_REPO", "RENDER_GIT_REPO_URL", "GIT_REPO"):
         val = os.environ.get(key, "")
         if val:
-            return val.replace("https://github.com/", "").replace(".git", "")
-    return ""
+            return (val.replace("https://github.com/", "")
+                       .replace("git@github.com:", "")
+                       .replace(".git", "")
+                       .strip("/"))
+    # Last resort: the repo this agent deploys from (keeps memory working
+    # even if Render renames its env vars)
+    return "nthato-matabane/potato-glue"
 
 
 def _token() -> str:

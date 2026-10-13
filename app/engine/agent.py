@@ -994,19 +994,31 @@ class AgentHub:
         # through the learning pipeline. The brain pre-trains on the symbol's
         # full recent history in minutes instead of trickling in knowledge
         # over days. Runs once; afterwards live ticks keep it sharp.
-        if not store.load_settings().get("mass_study_done"):
+        # Requires the public channel to be up (skip on a failed public boot
+        # so the agent can still start and trade on whatever it already has).
+        if self.public is not None and not store.load_settings().get("mass_study_done"):
             await self._mass_study()
 
         # live stream
         for sym, brain in self.brains.items():
-            await self.public.subscribe(
+            if self.public is None:
+                self.status_error = "public market-data channel did not connect"
+                store.log("error", self.status_error)
+                logger.error("%s: public channel unavailable — cannot subscribe to ticks", sym)
+                continue
+        await self.public.subscribe(
                 {"ticks": sym, "subscribe": 1},
                 self._tick_handler(brain), symbol_key=sym)
 
-        # authenticated channel (only when live trading is enabled)
-        app_id, pat = auth_mod.credentials()
-        if self.settings.get("live_enabled") and pat and app_id:
-            await self._start_authed()
+        # authenticated channel (only when live trading is enabled AND public is up)
+        if self.public is None:
+            self.status_error = self.status_error or "public market-data channel did not connect"
+            store.log("error", self.status_error)
+            logger.error("agent: public channel unavailable — cannot start live auth")
+        else:
+            app_id, pat = auth_mod.credentials()
+            if self.settings.get("live_enabled") and pat and app_id:
+                await self._start_authed()
 
         self.running = True
         self.started_at = time.time()

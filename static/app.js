@@ -112,6 +112,30 @@ async function refreshStatus() {
   window._snap = s;
 }
 
+function durNote(learning, ns) {
+  // Durability note that's honest about the free path: the GitHub branch is
+  // the durable store; /data is a working cache. "Backed up + restores on
+  // boot" only when the token is on THIS container AND there's a GitHub
+  // brain to restore from. Otherwise say exactly what's missing.
+  if (!ns) return "";
+  const githubThere = ns.github_brain_present;
+  const tokenOnThis = ns.token_set && ns.available;
+  if (githubThere && tokenOnThis) {
+    const m = ns.github_meta || {};
+    return `backed up to GitHub + restores on boot ☁️ · GitHub brain: <b>${m.trade_count || 0}</b> trades, <b>${m.total_updates || 0}</b> model updates, ${m.brains ? m.brains + " brains" : ""}${m.db_size ? " (" + (m.db_size / 1024 / 1024).toFixed(2) + " MB)" : ""} — protected from overwrite (push gate on)`;
+  }
+  if (!ns.token_set) {
+    return `add <b>GITHUB_TOKEN</b> on Render (Environment) — a token with <i>repo</i> scope — so this container can back up and restore the brain. Currently no token on this container.`;
+  }
+  if (!githubThere) {
+    return `token is on this container, but there's no brain on the <b>agent-memory</b> GitHub branch yet — back it up once from Settings so restores work on future boots.`;
+  }
+  if (ns.branch_exists && !tokenOnThis) {
+    return `GitHub brain exists but this container doesn't have the token — it can't back up or restore. Redeploy once with the token set so the new container gets it.`;
+  }
+  return "";
+}
+
 function renderLearning(learning, hubError, ns) {
   const el = $("learning-body");
   if (!el) return;
@@ -123,16 +147,20 @@ function renderLearning(learning, hubError, ns) {
       const token = ns.token_set ? "✅ set" : "❌ not set";
       const avail = ns.available ? "✅ available" : "❌ unavailable";
       const branch = ns.branch_exists ? "✅ exists" : "❌ missing";
-      const meta = ns.meta;
-      const githubBrain = meta && (meta.trade_count || 0) > 0
-        ? `GitHub brain: <b>${meta.trade_count}</b> trades, <b>${meta.total_updates || 0}</b> model updates, <b>${meta.brains || 0}</b> brains — <b>protected from overwrite</b> (push gate on)`
-        : "no brain on GitHub yet";
-      rows.push(`<div class="learn-row dim">memory backend: token ${token} · slug ${ns.repo_slug || "—"} · available ${avail} · branch ${branch}</div>`);
-      rows.push(`<div class="learn-row dim">${githubBrain}</div>`);
-      if (!ns.token_set) rows.push(`<div class="learn-row">Add <b>GITHUB_TOKEN</b> on Render (Environment) — a token with <i>repo</i> scope — then restart so the container picks it up and restores the brain.</div>`);
-      if (ns.token_set && !ns.available) rows.push(`<div class="learn-row">Token is set but notebook unavailable — likely the token value is wrong/invalid or GitHub is unreachable from this container.</div>`);
-      if (ns.token_set && ns.available && !ns.branch_exists) rows.push(`<div class="learn-row">Token is good but the <b>agent-memory</b> branch is missing on GitHub — the brain can't be restored until it's pushed there.</div>`);
-      if (ns.token_set && ns.available && ns.branch_exists && !ns.restored && ns.snapshot_sha) rows.push(`<div class="learn-row">Branch + brain exist on GitHub, but this container didn't restore it (restart picks up new env). Restart to load the brain.</div>`);
+      rows.push(`<div class="learn-row dim">memory backend: token ${token} · repo ${ns.repo_slug || "—"} · notebook ${avail} · branch ${branch}</div>`);
+      if (ns.github_brain_present) {
+        const m = ns.github_meta || {};
+        rows.push(`<div class="learn-row dim">GitHub brain: <b>${m.trade_count || 0}</b> trades, <b>${m.total_updates || 0}</b> model updates, ${m.brains ? m.brains + " brains" : "no brains yet"}${m.db_size ? " (" + (m.db_size / 1024 / 1024).toFixed(2) + " MB on GitHub)" : ""} — <b>protected from overwrite</b> (push gate on)`);
+      } else {
+        rows.push(`<div class="learn-row dim">no brain on the <b>agent-memory</b> GitHub branch yet</div>`);
+      }
+      const src = ns.restore_source;
+      if (src === "github") rows.push(`<div class="learn-row dim">this boot: restored <b>from GitHub</b> ☁️</div>`);
+      else if (src === "disk") rows.push(`<div class="learn-row dim">this boot: loaded from <b>/data</b> (persisted across this container's lifetime)</div>`);
+      else if (src === "fresh") rows.push(`<div class="learn-row dim">this boot: <b>fresh start</b> — no brain on disk or GitHub to restore</div>`);
+      rows.push(`<div class="learn-row">${durNote(learning, ns)}</div>`);
+    } else {
+      rows.push(`<div class="learn-row">Add <b>GITHUB_TOKEN</b> on Render (Environment) — a token with <i>repo</i> scope — so the agent can back up and restore its brain across redeploys.</div>`);
     }
     el.innerHTML = rows.join("");
     return;
@@ -144,7 +172,7 @@ function renderLearning(learning, hubError, ns) {
       : bestSkill >= 0.05 ? `⏳ warming up (score ${bestSkill.toFixed(2)}/1.0)`
       : "⏳ studying…";
     const memory = L.memory_ok
-      ? "✅ kept" + (learning.notebook_on ? " + backed up to GitHub ☁️" : " — add GITHUB_TOKEN on Render to survive redeploys ☁️")
+      ? "✅ kept"
       : "⏳ still studying its first history";
     const gaps = L.hazard_gaps || 0;
     return `<div class="learn-row">
@@ -154,6 +182,10 @@ function renderLearning(learning, hubError, ns) {
       <span class="dim">memory: ${memory}</span>
     </div>`;
   });
+  // one durability row for the whole agent (not per-symbol), so the panel
+  // stops saying "add GITHUB_TOKEN to survive redeploys" on every symbol
+  // when the brain is already kept and the real question is the token.
+  rows.push(`<div class="learn-row">${durNote(learning, ns)}</div>`);
   el.innerHTML = rows.join("");
 }
 

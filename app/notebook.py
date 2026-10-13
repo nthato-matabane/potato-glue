@@ -29,6 +29,12 @@ logger = logging.getLogger("spike.notebook")
 BRANCH = "agent-memory"
 API = "https://api.github.com"
 
+# Boot-time restore state, set by restore_if_available() and read by the
+# dashboard so the Learning & memory panel can report where this boot's DB
+# came from (GitHub restore vs /data persistence vs fresh).
+_restored_this_boot: bool | None = None
+_restore_source: str | None = None  # 'github' | 'disk' | 'fresh' | None before boot
+
 
 def _repo_slug() -> str:
     # Render sets RENDER_GIT_REPO_SLUG = "username/reponame" on every deploy
@@ -114,8 +120,16 @@ def _read_blob(client: httpx.Client) -> bytes | None:
 
 
 def restore_if_available() -> bool:
-    """Download the latest memory snapshot into place BEFORE the store opens."""
+    """Download the latest memory snapshot into place BEFORE the store opens.
+
+    Records whether this boot restored from GitHub so the dashboard can tell
+    the user where the in-memory brain came from (GitHub restore vs /data
+    persistence vs fresh start).
+    """
+    global _restored_this_boot, _restore_source
     if not available():
+        _restore_source = "disk" if _db_path().exists() else "fresh"
+        _restored_this_boot = False
         return False
     try:
         path = _db_path()
@@ -124,14 +138,84 @@ def restore_if_available() -> bool:
             blob = _read_blob(client)
         if not blob:
             logger.info("notebook: no snapshot in %s yet — fresh start", BRANCH)
+            _restore_source = "disk" if path.exists() else "fresh"
+            _restored_this_boot = False
             return False
         path.write_bytes(blob)
         logger.info("notebook: restored %d KB of memory from GitHub",
                     len(blob) // 1024)
+        _restore_source = "github"
+        _restored_this_boot = True
         return True
     except Exception as e:
         logger.warning("notebook: restore failed (%s) — fresh start", e)
+        _restore_source = "disk" if path.exists() else "fresh"
+        _restored_this_boot = False
         return False
+
+
+def _brain_meta() -> dict:
+    """Best-known learnedness on the memory branch, decoded for the dashboard.
+
+    A quick read of memory.meta.json (or the spike_agent.db file info) so
+    the panel can report whether there's a protected brain on GitHub and
+    how learned it is — without triggering a push.
+    """
+    if not available():
+        return {}
+    try:
+        with httpx.Client() as client:
+            meta = _meta_get(client)
+            if meta and (meta.get("decoded")):
+                return dict(meta["decoded"])
+            # Fall back: at least report that the db blob exists on the branch.
+            r = client.get(
+                f"{API}/repos/{_repo_slug()}/contents/spike_agent.db?ref={BRANCH}",
+                headers=_headers(), timeout=20)
+            if r.status_code == 200:
+                j = r.json()
+                sz = j.get("size") or 0
+                return {"db_size": int(sz), "db_sha": j.get("sha")}
+    except Exception as e:
+        logger.debug("notebook: meta read failed (%s)", e)
+    return {}
+
+
+def notebook_status() -> dict:
+    """Plain-English status of the GitHub memory notebook for the dashboard.
+
+    Called from the snapshot so the Learning & memory panel can report the
+    truth about durable memory: whether the token is set, whether the branch
+    and brain exist, whether this boot restored from GitHub, and how learned
+    the protected brain on GitHub is.
+    """
+    slug = _repo_slug()
+    tok = _token()
+    status: dict = {
+        "token_set": bool(tok),
+        "repo_slug": slug or "—",
+        "available": bool(tok and slug),
+        "branch_exists": False,
+        "github_brain_present": False,
+        "github_meta": {},
+        "restored_this_boot": _restored_this_boot if _restored_this_boot is not None else False,
+        "restore_source": _restore_source or (_db_path().exists() and "disk" or "fresh"),
+    }
+    if not (tok and slug):
+        return status
+    try:
+        with httpx.Client() as client:
+            r = client.get(
+                f"{API}/repos/{_repo_slug()}/git/ref/heads/{BRANCH}",
+                headers=_headers(), timeout=15)
+            status["branch_exists"] = r.status_code == 200
+            meta = _brain_meta()
+            status["github_meta"] = meta
+            status["github_brain_present"] = bool(
+                meta.get("trade_count", 0) or meta.get("db_size", 0) > 0)
+    except Exception as e:
+        logger.debug("notebook: status read failed (%s)", e)
+    return status
 
 
 def _learnedness() -> dict:

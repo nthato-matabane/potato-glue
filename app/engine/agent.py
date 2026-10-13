@@ -1038,13 +1038,6 @@ class AgentHub:
         }
 
 
-def notebook_available() -> bool:
-    try:
-        from .. import notebook
-        return notebook.available()
-    except Exception:
-        return False
-
     async def _mass_study(self) -> None:
         """Deep pre-training on real history, straight from Deriv.
 
@@ -1271,3 +1264,18 @@ def notebook_available() -> bool:
 
 # process-wide singleton
 hub = AgentHub()
+
+
+def notebook_available() -> bool:
+    """Is the GitHub memory notebook available on this host?
+
+    Render provides RENDER_GIT_REPO_SLUG (username/reponame) on every
+    deploy; the notebook module detects it automatically. Call this from
+    the dashboard snapshot so the Learning & memory panel can show whether
+    permanent memory is on without triggering a backup.
+    """
+    try:
+        from . import notebook
+        return notebook.available()
+    except Exception:
+        return False

@@ -113,9 +113,27 @@ def _masked_settings() -> dict:
 
 @router.get("/status", dependencies=[Depends(require_auth)])
 def status():
-    snap = hub.snapshot()
+    # Defend against a hub that somehow lacks snapshot (import/reload races,
+    # partial reloads on free-host restarts). A missing method must never
+    # crash the whole app / block the dashboard from showing anything.
+    snap: dict = {}
+    if hasattr(hub, "snapshot") and callable(hub.snapshot):
+        try:
+            snap = hub.snapshot()
+        except Exception as e:
+            snap = {"error": f"snapshot failed: {e}"}
+    else:
+        snap = {
+            "error": "agent not ready (no snapshot method)",
+            "running": bool(hub and getattr(hub, "running", False)),
+            "symbols": list(getattr(hub, "brains", {}).keys()),
+        }
     snap["settings"] = _masked_settings()
-    snap["last_signal"] = {s: b.last_signal for s, b in dict(hub.brains).items()}
+    brains = getattr(hub, "brains", {})
+    snap["last_signal"] = {
+        s: getattr(b, "last_signal", None)
+        for s, b in dict(brains).items()
+    }
     return snap
 
 
@@ -184,7 +202,7 @@ def equity():
     return {
         "paper": store.get_equity(live=False, limit=2000),
         "live": store.get_equity(live=True, limit=2000),
-        "paper_balance": hub.paper_balance if hasattr(hub, "paper_balance") else None,
+        "paper_balance": getattr(hub, "paper_balance", None),
     }
 
 

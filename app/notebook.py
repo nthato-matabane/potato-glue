@@ -94,7 +94,23 @@ def _read_blob(client: httpx.Client) -> bytes | None:
         headers=_headers(), timeout=30)
     if r.status_code != 200:
         return None
-    return base64.b64decode(r.json().get("content") or b"")
+    j = r.json()
+    content = j.get("content") or ""
+    if content:
+        return base64.b64decode(content)
+    # Large files (like a 3 MB SQLite brain) have empty inline content on
+    # the Contents API but a working download_url. Fall back so a valid
+    # brain on GitHub is always restorable (not silently treated as "no
+    # snapshot").
+    download_url = j.get("download_url") or ""
+    if download_url:
+        try:
+            d = client.get(download_url, headers={"Authorization": f"Bearer {_token()}"}, timeout=90)
+            if d.status_code == 200 and d.content:
+                return d.content
+        except Exception as e:
+            logger.debug("notebook: download_url fallback failed (%s) — will retry on next boot", e)
+    return None
 
 
 def restore_if_available() -> bool:

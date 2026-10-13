@@ -111,6 +111,7 @@ async function refreshStatus() {
   // notebook_status is served at the top level (api.py promotes it from
   // s.learning.notebook_status). Defend in case the shape changes.
   renderLearning(s.learning, s.error, s.notebook_status || (s.learning && s.learning.notebook_status));
+  renderProfitability(s, equityData);
   window._snap = s;
 }
 
@@ -337,6 +338,142 @@ function setMeter(el, sel, frac, text, fmtFn) {
   m.querySelector("i").style.width = Math.max(0, Math.min(1, frac || 0) * 100) + "%";
 }
 
+// ---------------------------------------------------------------- profitability ----
+
+function fmtPnl(v) {
+  return v == null ? "\u2014" : (v < 0 ? "-$" : "+$") + Math.abs(Number(v)).toFixed(2);
+}
+
+function profitVerdict(s, trend, todayPnl, bestSkill, nSharp, hasTodayActivity) {
+  // Plain-English verdict from real data. We don't declare "profitable" until
+  // the equity curve is trending up AND today is positive AND at least one
+  // symbol is sharp. Everything else is an honest intermediate state.
+  // hasTodayActivity is true when the paper equity curve has a non-null delta
+  // since midnight (i.e. there has been today's activity) -- not a trade count.
+  const running = !!(s && s.running);
+  if (!running || !s || !s.symbols) return { text: "agent not running", cls: "neutral" };
+  if (!hasTodayActivity) {
+    if (bestSkill >= 0.2) return { text: "learning \u2014 brain is sharp but hasn\u2019t traded today yet", cls: "warm" };
+    return { text: "learning \u2014 studying the market, no trades today yet", cls: "neutral" };
+  }
+  const up = trend == null ? null : trend > 0;
+  const posDay = todayPnl > 0;
+  const flatDay = Math.abs(todayPnl) < 0.20;
+  if (up && posDay && nSharp >= 1) return { text: "early positive \u2014 paper up, today positive, brain sharp", cls: "good" };
+  if (up && flatDay && nSharp >= 1) return { text: "learning \u2014 paper up, today roughly flat, brain sharp", cls: "warm" };
+  if (up && !posDay && nSharp >= 1) return { text: "learning \u2014 paper up but today red, brain sharp", cls: "warm" };
+  if (!up && posDay && nSharp >= 1) return { text: "mixed \u2014 paper down, today positive, brain sharp", cls: "warm" };
+  if (!up && !posDay && nSharp >= 1) return { text: "learning \u2014 paper down, today red, brain still sharp", cls: "bad" };
+  if (bestSkill >= 0.2) return { text: "learning \u2014 brain sharp but not pulling ahead yet", cls: "warm" };
+  return { text: "learning \u2014 not yet profitable", cls: "bad" };
+}
+
+let _lastProfit = null;
+
+function renderProfitability(s, equityData) {
+  const el = $("profit-body");
+  if (!el) return;
+  if (!s || !equityData || !equityData.paper || equityData.paper.length < 2) {
+    el.innerHTML = `<div class="profit-empty">starting \u2014 the agent hasn\u2019t run yet</div>`;
+    _lastProfit = null;
+    return;
+  }
+  const paper = s.paper_balance != null ? Number(s.paper_balance) : null;
+  const mode = s.mode || "auto";
+  const live = !!(s && s.live_enabled);
+
+  // today\u2019s P&L from the paper equity curve (delta since midnight UTC).
+  // Cross-checked against risk.daily_profit and today\u2019s trades below.
+  const curve = equityData.paper;
+  const todayStart = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) / 1000;
+  let todayVal = null, firstToday = null, lastToday = null;
+  for (let i = curve.length - 1; i >= 0; i--) {
+    if (curve[i].ts >= todayStart) { lastToday = curve[i].value; if (!firstToday) firstToday = curve[i].value; }
+    else if (firstToday && !todayVal) { todayVal = curve[i].value; break; }
+  }
+  if (lastToday != null && firstToday != null) {
+    // firstToday is the first point at/after midnight; use it as the day\u2019s start.
+    todayVal = firstToday;
+  }
+  const todayPnl = (lastToday != null && todayVal != null) ? lastToday - todayVal : null;
+
+  // equity trend: slope of the last ~40 paper points (a few minutes of ticks).
+  const trendWindow = Math.min(curve.length, 40);
+  const recent = curve.slice(-trendWindow);
+  let trend = null;
+  if (recent.length >= 2) {
+    const xs = recent.map((p, i) => i);
+    const ys = recent.map((p) => p.value);
+    const n = xs.length;
+    const mx = xs.reduce((a, b) => a + b, 0) / n;
+    const my = ys.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2; }
+    trend = den ? (num / den) : 0; // value change per point in the window
+  }
+
+  // per-symbol skill + recent paper P&L (last ~400 trades per mode) + recent
+  // trade count. paper_drift/paper_spike are rolling deques (maxlen 400), so
+  // they are "recent", NOT strictly "today". We label them honestly.
+  const syms = s.symbols || {};
+  const rows = Object.entries(syms).map(([key, st]) => {
+    const label = (SYMBOL_META && SYMBOL_META[key]) || key;
+    const fast = (st && st.models && st.models.fast) || {};
+    const slow = (st && st.models && st.models.slow) || {};
+    const bestSkill = Math.max(Number(fast.brier_skill || 0), Number(slow.brier_skill || 0));
+    const skillCls = bestSkill >= 0.2 ? "sharp" : (bestSkill >= 0.05 ? "warming" : "studying");
+    const skillTxt = bestSkill > 0 ? bestSkill.toFixed(2) : "\u2014";
+    const pd = st && st.paper_drift ? st.paper_drift : {};
+    const ps = st && st.paper_spike ? st.paper_spike : {};
+    const pnl = ((pd && pd.net) || (ps && ps.net) || null);
+    const n = ((pd && pd.n) || (ps && ps.n) || 0);
+    return { key, label, bestSkill, skillCls, skillTxt, pnl, n };
+  });
+  // sort by absolute recent P&L desc, then by skill desc
+  rows.sort((a, b) => Math.abs(b.pnl || 0) - Math.abs(a.pnl || 0) || b.bestSkill - a.bestSkill);
+
+  // best skill + count of sharp symbols (used by the verdict)
+  let bestSkill = 0, nSharp = 0;
+  for (const r of rows) {
+    if (r.bestSkill > bestSkill) bestSkill = r.bestSkill;
+    if (r.bestSkill >= 0.2) nSharp++;
+  }
+
+  // Whether there has been today\u2019s paper activity: the equity curve has at
+  // least one point today AND today\u2019s curve delta is non-zero (or we just
+  // don\u2019t know yet). We don\u2019t claim a precise today trade count from the
+  // rolling per-symbol deques (those are recent, not today).
+  const hasTodayActivity = todayPnl != null;
+
+  const v = profitVerdict(s, trend, todayPnl, bestSkill, nSharp, hasTodayActivity);
+
+  // cross-check: risk.daily_profit and trades-based today P&L (if we had the
+  // trades endpoint here). We don\u2019t fetch trades in renderProfitability to
+  // avoid an extra request; the per-symbol n is the proxy for today\u2019s count.
+  const riskDaily = (s && s.risk && s.risk.daily_profit != null) ? Number(s.risk.daily_profit) : null;
+
+  el.innerHTML = `
+    <div class="profit-head">
+      <div class="profit-verdict ${v.cls}">${escapeHTML(v.text)}</div>
+      <div class="profit-stat"><label>Paper balance</label><b>${paper != null ? money(paper) : "\u2014"}</b>${live ? `<div class="sub">live: ${s.currency||""} ${fmt(Number(s.live_balance||0))}</div>` : `<div class="sub">paper only</div>`}</div>
+      <div class="profit-stat"><label>Today\u2019s P&amp;L (paper)</label><b>${todayPnl != null ? fmtPnl(todayPnl) : "\u2014"}</b>${riskDaily != null ? `<div class="sub">risk log: ${fmtPnl(riskDaily)}</div>` : ""}</div>
+      <div class="profit-stat"><label>Equity trend</label><b>${trend == null ? "\u2014" : (trend > 0.001 ? "\u25b2 up" : (trend < -0.001 ? "\u25bc down" : "\u25ac flat"))}</b><div class="sub">last ${trendWindow} points</div></div>
+    </div>
+    <div class="profit-syms">
+      <div class="ps-head"><span>Symbol</span><span>skill / recent paper P&amp;L</span><span>Recent</span><span>Trades</span></div>
+      ${rows.length ? rows.map(r => `
+        <div class="profit-row">
+          <div class="sym">${escapeHTML(r.label)}</div>
+          <div class="sk"><i>skill ${r.skillTxt}</i> ${r.skillCls === "sharp" ? "\u2705" : (r.skillCls === "warming" ? "\u23f3" : "\u231b")}</div>
+          <div class="pnl">${r.pnl != null ? fmtPnl(r.pnl) : "\u2014"}</div>
+          <div class="tt">${r.n || 0}</div>
+        </div>`).join("")}
+      ${rows.length === 0 ? `<div class="profit-empty">no symbols loaded yet</div>` : ""}
+    </div>
+  `;
+  _lastProfit = { trend, todayPnl, bestSkill, nSharp, hasTodayActivity };
+}
+
 // ---------------------------------------------------------------- chart ----
 
 async function refreshEquity() {
@@ -344,6 +481,7 @@ async function refreshEquity() {
     const r = await api("/api/equity");
     equityData = r;
     drawChart();
+    renderProfitability(window._snap, equityData);
   } catch (e) {}
 }
 

@@ -118,16 +118,63 @@ def restore_if_available() -> bool:
         return False
 
 
+def _learnedness() -> dict:
+    """How much the local brain has learned, for the push gate.
+
+    We gate pushes on this so a half-studied (or freshly-booted) local DB
+    never overwrites a more-learned brain already on GitHub. Progression,
+    not a wipe loop.
+    """
+    from . import store
+    from .engine.agent import hub
+    trades = store.get_trades(limit=100000, live=False)
+    paper = sum(1 for t in trades if not t.get("live"))
+    live = sum(1 for t in trades if t.get("live"))
+    total_updates = 0
+    for b in hub.brains.values():
+        total_updates += int(getattr(b.fast, "n_updates", 0) or 0)
+        total_updates += int(getattr(b.slow, "n_updates", 0) or 0)
+    return {
+        "trade_count": paper + live,
+        "paper_trades": paper,
+        "live_trades": live,
+        "total_updates": total_updates,
+        "brains": len(list(hub.brains.keys())),
+    }
+
+
 def push_snapshot() -> bool:
-    """Commit the current database file to the memory branch (best effort)."""
+    """Commit the current database file to the memory branch — but only if
+    the local brain is at least as learned as the one already on GitHub.
+
+    This is what turns the backup from a wipe loop into progression: a
+    freshly-booted (or half-studied) local DB will NOT overwrite a more-
+    learned brain on GitHub. The agent keeps building on the best-known
+    brain instead of replacing it with a lesser one.
+    """
     if not available():
         return False
     path = _db_path()
     if not path.exists():
         return False
+    local = _learnedness()
     try:
         blob = path.read_bytes()
         with httpx.Client() as client:
+            remote_meta = _meta_get(client)
+            remote_learned = (remote_meta or {}).get("decoded", {}) if remote_meta else {}
+            # If GitHub has a brain and local is behind on BOTH trade count
+            # and model updates, skip the push — keep the better brain.
+            if remote_learned:
+                rc = int(remote_learned.get("trade_count", 0) or 0)
+                ru = int(remote_learned.get("total_updates", 0) or 0)
+                if (local["trade_count"] < rc and
+                        local["total_updates"] < ru):
+                    logger.info(
+                        "notebook: skip push — GitHub brain ahead "
+                        "(local %d trades / %d updates vs remote %d / %d)",
+                        local["trade_count"], local["total_updates"], rc, ru)
+                    return False
             sha = _get_ref(client)
             if not sha:
                 main = client.get(f"{API}/repos/{_repo_slug()}/git/ref/heads/main",
@@ -138,6 +185,13 @@ def push_snapshot() -> bool:
                 if not _create_branch(client, main.json()["object"]["sha"]):
                     return False
                 sha = _get_ref(client)
+            # Seed a learnedness meta on the fresh branch so the gate has a
+            # baseline (empty) even before the first real push.
+            if sha and not _meta_get(client):
+                _meta_save(client, {"trade_count": 0, "paper_trades": 0,
+                                     "live_trades": 0, "total_updates": 0,
+                                     "brains": 0, "updated": __import__("time").time()},
+                            None)
             existing = _read_blob(client)
             if existing == blob:
                 return True                      # nothing new
@@ -153,6 +207,14 @@ def push_snapshot() -> bool:
             if r.status_code in (200, 201):
                 logger.info("notebook: memory pushed to GitHub (%d KB)",
                             len(blob) // 1024)
+                # refresh the learnedness meta so the gate tracks the
+                # best-known brain (progression, not a loop).
+                _meta_save(client, {
+                    **local,
+                    "updated": __import__("time").time(),
+                    "db_sha": r.json().get("content", {}).get("sha")
+                            if isinstance(r.json().get("content"), dict) else None,
+                }, None)
                 return True
             logger.warning("notebook: push failed (%s)", r.text[:200])
             return False
@@ -168,3 +230,37 @@ def _file_sha(client: httpx.Client) -> str | None:
     if r.status_code == 200:
         return r.json().get("sha")
     return None
+
+
+def _meta_get(client: httpx.Client) -> dict | None:
+    """Best-known learnedness on the memory branch (trade_count,
+    total_model_updates). Used by the push gate so a half-studied local
+    DB never overwrites a more-learned GitHub brain."""
+    r = client.get(
+        f"{API}/repos/{_repo_slug()}/contents/memory.meta.json?ref={BRANCH}",
+        headers=_headers(), timeout=20)
+    if r.status_code != 200:
+        return None
+    try:
+        return r.json().get("content") and {
+            **r.json(),
+            "decoded": __import__("json").loads(
+                base64.b64decode(r.json().get("content") or "[]") or {}),
+        }
+    except Exception:
+        return None
+
+
+def _meta_save(client: httpx.Client, meta: dict, sha: str | None) -> bool:
+    import json as _json
+    body = _json.dumps(meta, separators=(",", ":")).encode()
+    r = client.put(
+        f"{API}/repos/{_repo_slug()}/contents/memory.meta.json",
+        headers=_headers(), timeout=30,
+        json={
+            "message": "agent memory: learnedness meta",
+            "content": base64.b64encode(body).decode(),
+            "branch": BRANCH,
+            "sha": sha,
+        })
+    return r.status_code in (200, 201)

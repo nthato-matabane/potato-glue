@@ -1019,7 +1019,12 @@ class AgentHub:
                     len(self.brains), bool(self.settings.get("live_enabled")))
 
     def learning_snapshot(self) -> dict:
-        """Plain-English summary of what the agent has learned so far."""
+        """Plain-English summary of what the agent has learned so far.
+
+        When the agent has no brain loaded yet (fresh boot, restore didn't
+        pull), this also reports the notebook status so the dashboard can
+        tell the user whether the memory branch is reachable/protected.
+        """
         symbols = {}
         for sym, b in self.brains.items():
             f, s = b.fast, b.slow
@@ -1031,10 +1036,17 @@ class AgentHub:
                 "hazard_gaps": len(b.hazard.intervals),
                 "memory_ok": len(b.hazard.intervals) > 0 or f.n_updates > 0,
             }
+        ns = {}
+        try:
+            from .. import notebook
+            ns = notebook.notebook_status()
+        except Exception:
+            pass
         return {
             "symbols": symbols,
             "last_save": store.last_model_save(),
             "notebook_on": notebook_available(),
+            "notebook_status": ns,
         }
 
 

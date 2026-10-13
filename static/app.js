@@ -108,16 +108,33 @@ async function refreshStatus() {
 
   renderSymbols(s.symbols || {}, s.last_signal || {});
   $("stat-trades").textContent = countLive(s.symbols || {});
-  renderLearning(s.learning, s.error);
+  renderLearning(s.learning, s.error, s.notebook_status);
   window._snap = s;
 }
 
-function renderLearning(learning, hubError) {
+function renderLearning(learning, hubError, ns) {
   const el = $("learning-body");
   if (!el) return;
   if (!learning || !learning.symbols || !Object.keys(learning.symbols).length) {
-    el.innerHTML = `<div class="learn-row">${
-      hubError ? "⚠ " + hubError : "starting — no brain data yet"}</div>`;
+    const rows = [];
+    if (hubError) rows.push(`<div class="learn-row">⚠ ${hubError}</div>`);
+    else rows.push(`<div class="learn-row">starting — no brain data yet</div>`);
+    if (ns) {
+      const token = ns.token_set ? "✅ set" : "❌ not set";
+      const avail = ns.available ? "✅ available" : "❌ unavailable";
+      const branch = ns.branch_exists ? "✅ exists" : "❌ missing";
+      const meta = ns.meta;
+      const githubBrain = meta && (meta.trade_count || 0) > 0
+        ? `GitHub brain: <b>${meta.trade_count}</b> trades, <b>${meta.total_updates || 0}</b> model updates, <b>${meta.brains || 0}</b> brains — <b>protected from overwrite</b> (push gate on)`
+        : "no brain on GitHub yet";
+      rows.push(`<div class="learn-row dim">memory backend: token ${token} · slug ${ns.repo_slug || "—"} · available ${avail} · branch ${branch}</div>`);
+      rows.push(`<div class="learn-row dim">${githubBrain}</div>`);
+      if (!ns.token_set) rows.push(`<div class="learn-row">Add <b>GITHUB_TOKEN</b> on Render (Environment) — a token with <i>repo</i> scope — then restart so the container picks it up and restores the brain.</div>`);
+      if (ns.token_set && !ns.available) rows.push(`<div class="learn-row">Token is set but notebook unavailable — likely the token value is wrong/invalid or GitHub is unreachable from this container.</div>`);
+      if (ns.token_set && ns.available && !ns.branch_exists) rows.push(`<div class="learn-row">Token is good but the <b>agent-memory</b> branch is missing on GitHub — the brain can't be restored until it's pushed there.</div>`);
+      if (ns.token_set && ns.available && ns.branch_exists && !ns.restored && ns.snapshot_sha) rows.push(`<div class="learn-row">Branch + brain exist on GitHub, but this container didn't restore it (restart picks up new env). Restart to load the brain.</div>`);
+    }
+    el.innerHTML = rows.join("");
     return;
   }
   const rows = Object.entries(learning.symbols).map(([sym, L]) => {

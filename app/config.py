@@ -53,26 +53,53 @@ DB_PATH: Path = DATA_DIR / "spike_agent.db"
 # needs (buys on Boom, sells on Crash). The free hosts (0.1 CPU) crash-loop
 # with 6 symbols warming up; 2 keeps the same brain quality per symbol.
 # You can add more symbols later from the settings page if you upgrade hosts.
-DEFAULT_SYMBOLS: list[str] = ["BOOM500", "CRASH500"]
+DEFAULT_SYMBOLS: list[str] = ["BOOM500", "CRASH500", "BOOM150N", "1HZ100V"]
 
+# Per-symbol metadata. Every tradable symbol carries a "class" (the market
+# behaviour family) and a "template" (which strategy brain handles it):
+#   class="spike"  template="spike"  -> SymbolBrain (spike-timing hazard model,
+#                                       drift + spike modes, pre-spike exit). Fits
+#                                       Boom/Crash (rare directional spikes).
+#   class="volatility" template="volatility" -> VolWatch (observe-only for now:
+#                                       subscribe + track price/interval, no entries,
+#                                       no spike model). For Volatility 100/25/... (1s)
+#                                       continuous-movement indices. A real volatility
+#                                       template is deferred until we've watched them.
+#   (more classes/templates can be added here as the universe grows)
 SYMBOL_META: dict[str, dict] = {
-    # average ticks between spikes is the documented name-number for most
-    # symbols; 150N/300N are the newer generation (measured ~100-180 ticks).
-    "BOOM1000":  {"label": "Boom 1000",  "avg_interval": 1000, "spike_dir": +1},
-    "CRASH1000": {"label": "Crash 1000", "avg_interval": 1000, "spike_dir": -1},
-    "BOOM500":   {"label": "Boom 500",   "avg_interval": 500,  "spike_dir": +1},
-    "CRASH500":  {"label": "Crash 500",  "avg_interval": 500,  "spike_dir": -1},
-    "BOOM150N":  {"label": "Boom 150",   "avg_interval": 130,  "spike_dir": +1},
-    "CRASH150N": {"label": "Crash 150",  "avg_interval": 130,  "spike_dir": -1},
-    "BOOM300N":  {"label": "Boom 300",   "avg_interval": 300,  "spike_dir": +1},
-    "CRASH300N": {"label": "Crash 300",  "avg_interval": 300,  "spike_dir": -1},
-    "BOOM50":    {"label": "Boom 50",    "avg_interval": 50,   "spike_dir": +1},
-    "CRASH50":   {"label": "Crash 50",   "avg_interval": 50,   "spike_dir": -1},
-    "BOOM600":   {"label": "Boom 600",   "avg_interval": 600,  "spike_dir": +1},
-    "CRASH600":  {"label": "Crash 600",  "avg_interval": 600,  "spike_dir": -1},
-    "BOOM900":   {"label": "Boom 900",   "avg_interval": 900,  "spike_dir": +1},
-    "CRASH900":  {"label": "Crash 900",  "avg_interval": 900,  "spike_dir": -1},
+    # ---- Boom / Crash (spike template; rare directional spikes) ----
+    "BOOM1000":  {"label": "Boom 1000",  "class": "spike", "template": "spike", "avg_interval": 1000, "spike_dir": +1},
+    "CRASH1000": {"label": "Crash 1000", "class": "spike", "template": "spike", "avg_interval": 1000, "spike_dir": -1},
+    "BOOM500":   {"label": "Boom 500",   "class": "spike", "template": "spike", "avg_interval": 500,  "spike_dir": +1},
+    "CRASH500":  {"label": "Crash 500",  "class": "spike", "template": "spike", "avg_interval": 500,  "spike_dir": -1},
+    "BOOM150N":  {"label": "Boom 150",   "class": "spike", "template": "spike", "avg_interval": 130,  "spike_dir": +1},
+    "CRASH150N": {"label": "Crash 150",  "class": "spike", "template": "spike", "avg_interval": 130,  "spike_dir": -1},
+    "BOOM300N":  {"label": "Boom 300",   "class": "spike", "template": "spike", "avg_interval": 300,  "spike_dir": +1},
+    "CRASH300N": {"label": "Crash 300",  "class": "spike", "template": "spike", "avg_interval": 300,  "spike_dir": -1},
+    "BOOM50":    {"label": "Boom 50",    "class": "spike", "template": "spike", "avg_interval": 50,   "spike_dir": +1},
+    "CRASH50":   {"label": "Crash 50",   "class": "spike", "template": "spike", "avg_interval": 50,   "spike_dir": -1},
+    "BOOM600":   {"label": "Boom 600",   "class": "spike", "template": "spike", "avg_interval": 600,  "spike_dir": +1},
+    "CRASH600":  {"label": "Crash 600",  "class": "spike", "template": "spike", "avg_interval": 600,  "spike_dir": -1},
+    "BOOM900":   {"label": "Boom 900",   "class": "spike", "template": "spike", "avg_interval": 900,  "spike_dir": +1},
+    "CRASH900":  {"label": "Crash 900",  "class": "spike", "template": "spike", "avg_interval": 900,  "spike_dir": -1},
+
+    # ---- Volatility indices (observe-only for now; continuous movement,
+    #      NOT rare spikes — the spike template does NOT fit these) ----
+    #      Real Deriv API symbol names (underlying_symbol) confirmed via the
+    #      public active_symbols endpoint: Volatility 100/25/... (1s) Index.
+    #      Display names: "Volatility 100 (1s) Index", etc.
+    "1HZ10V":  {"label": "Volatility 10", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ15V":  {"label": "Volatility 15", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ25V":  {"label": "Volatility 25", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ30V":  {"label": "Volatility 30", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ50V":  {"label": "Volatility 50", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ75V":  {"label": "Volatility 75", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ90V":  {"label": "Volatility 90", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
+    "1HZ100V": {"label": "Volatility 100", "class": "volatility", "template": "volatility", "avg_interval": 1, "spike_dir": 0},
 }
+
+SYMBOL_TEMPLATE = {k: v.get("template", "spike") for k, v in SYMBOL_META.items()}
+SYMBOL_CLASS = {k: v.get("class", "spike") for k, v in SYMBOL_META.items()}
 
 # Contracts available on these symbols: multipliers only.
 AVAILABLE_MULTIPLIERS = [100, 150, 200, 300, 400, 500]
@@ -102,6 +129,12 @@ DEFAULT_SETTINGS: dict = {
     "auto_switch_margin": 0.20,   # switch modes only if other side is 20% better
     "warmup_ticks": 4000,         # historical ticks fetched at startup
     "min_balance_usd": 1.0,       # never trade below this balance
+    # staggered boot: how many symbols to warm + start trading immediately
+    # (the rest warm in the background with pauses so the free host never
+    # saturates). Tunable via the settings page or DERIV_* env.
+    "warmup_front_batch": 2,      # symbols started immediately on boot
+    "warmup_concurrent": 2,        # max concurrent history downloads during warm-up
+    "study_ticks": 20000,          # ticks mass-studied per symbol (direct from Deriv)
 }
 
 # Locked-in profit settings, re-applied on EVERY boot so the user never

@@ -288,33 +288,45 @@ function updateCard(el, st, sig) {
   chip.textContent = mode;
   chip.className = "mode-chip mode-" + mode;
 
-  setMeter(el, ".pf", st.p_fast, st.p_fast, v => (v * 100).toFixed(3) + "%");
-  setMeter(el, ".ps", st.p_slow, st.p_slow, v => (v * 100).toFixed(2) + "%");
-  const ageFrac = st.mean_interval ? Math.min(st.age / st.mean_interval, 1) : 0;
-  setMeter(el, ".age", ageFrac, st.age + " / " + Math.round(st.mean_interval || 0));
-  setMeter(el, ".agep", st.age_pct, st.age_pct, v => (v * 100).toFixed(0) + "%");
+  // Symbols without a spike labeler/hazard/models (e.g. volatility watch,
+  // observe-only) don't have spike probabilities or spike age — show "—"
+  // instead of misleading zeroes.
+  const hasSpikeModel = !!(st.models && st.models.fast);
+  if (hasSpikeModel) {
+    setMeter(el, ".pf", st.p_fast, st.p_fast, v => (v * 100).toFixed(3) + "%");
+    setMeter(el, ".ps", st.p_slow, st.p_slow, v => (v * 100).toFixed(2) + "%");
+    const ageFrac = st.mean_interval ? Math.min(st.age / st.mean_interval, 1) : 0;
+    setMeter(el, ".age", ageFrac, st.age + " / " + Math.round(st.mean_interval || 0));
+    setMeter(el, ".agep", st.age_pct, st.age_pct, v => (v * 100).toFixed(0) + "%");
+  } else {
+    [".pf", ".ps", ".age", ".agep"].forEach(sel => {
+      const b = el.querySelector(sel); if (b) b.textContent = "\u2014";
+      const meter = b ? b.closest(".meter") : null;
+      if (meter) { const bar = meter.querySelector("i"); if (bar) bar.style.width = "0%"; }
+    });
+  }
 
   const pd = st.paper_drift || {}, ps = st.paper_spike || {};
   const expEl = el.querySelector(".expd");
-  expEl.textContent = `${money(pd.net)} (${pd.n || 0})`;
+  expEl.textContent = hasSpikeModel ? `${money(pd.net)} (${pd.n || 0})` : "\u2014";
   expEl.className = (pd.net || 0) >= 0 ? "pos" : "neg";
   const exps = el.querySelector(".exps");
-  exps.textContent = `${money(ps.net)} (${ps.n || 0})`;
+  exps.textContent = hasSpikeModel ? `${money(ps.net)} (${ps.n || 0})` : "\u2014";
   exps.className = (ps.net || 0) >= 0 ? "pos" : "neg";
-  el.querySelector(".spk").textContent = st.spikes || 0;
+  el.querySelector(".spk").textContent = hasSpikeModel ? (st.spikes || 0) : "\u2014";
 
   el.querySelector(".mi").textContent = "interval " + Math.round(st.mean_interval || 0);
   const m = (st.models || {}).fast || {};
-  el.querySelector(".mf").textContent = "skill " + (m.brier_skill != null ? m.brier_skill : "—");
+  el.querySelector(".mf").textContent = hasSpikeModel ? ("skill " + (m.brier_skill != null ? m.brier_skill : "\u2014")) : "\u2014";
   el.querySelector(".rs").textContent = st.regime_shift ? "⚠ regime shift" : "";
   el.querySelector(".rs").style.color = st.regime_shift ? "var(--amber)" : "";
 
-  el.querySelector(".fs").textContent = ((st.models || {}).fast || {}).brier_skill;
-  el.querySelector(".ssk").textContent = ((st.models || {}).slow || {}).brier_skill;
-  el.querySelector(".fu").textContent = ((st.models || {}).fast || {}).updates;
-  el.querySelector(".su").textContent = ((st.models || {}).slow || {}).updates;
-  el.querySelector(".br").textContent = ((st.models || {}).fast || {}).base_rate;
-  el.querySelector(".thr").textContent = st.threshold;
+  el.querySelector(".fs").textContent = hasSpikeModel ? ((st.models || {}).fast || {}).brier_skill : "\u2014";
+  el.querySelector(".ssk").textContent = hasSpikeModel ? ((st.models || {}).slow || {}).brier_skill : "\u2014";
+  el.querySelector(".fu").textContent = hasSpikeModel ? ((st.models || {}).fast || {}).updates : "\u2014";
+  el.querySelector(".su").textContent = hasSpikeModel ? ((st.models || {}).slow || {}).updates : "\u2014";
+  el.querySelector(".br").textContent = hasSpikeModel ? ((st.models || {}).fast || {}).base_rate : "\u2014";
+  el.querySelector(".thr").textContent = st.threshold != null ? st.threshold : "\u2014";
   el.querySelector(".reason").textContent = st.auto_reason || "";
 
   // position chip

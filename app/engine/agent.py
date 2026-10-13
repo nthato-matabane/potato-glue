@@ -160,16 +160,22 @@ class SymbolBrain:
         self.label = meta["label"]
         self.avg_interval = int(meta["avg_interval"])
         self.spike_dir = int(meta["spike_dir"])      # +1 up spikes, -1 down spikes
+        self.template = meta.get("template", "spike")   # "spike" | "volatility" | ...
+        self.class_ = meta.get("class", "spike")         # market behaviour family
         self.pip = pip_size
         self.settings = settings
 
-        self.labeler = SpikeLabeler(pip=pip_size)
-        self.hazard = HazardEstimator(self.avg_interval)
-        self.feats = FeatureState(self.avg_interval, self.spike_dir)
-        self.fast = OnlineSpikeModel(D, H_FAST)
-        self.slow = OnlineSpikeModel(D, H_SLOW)
-        self.pipe_fast = _LabelPipe(self.fast, H_FAST)
-        self.pipe_slow = _LabelPipe(self.slow, H_SLOW)
+        # Spike-template brains use the full spike-timing pipeline below.
+        # Other templates (e.g. volatility) are handled by dedicated classes
+        # (VolWatch) that do NOT instantiate this spike machinery.
+        if self.template == "spike":
+            self.labeler = SpikeLabeler(pip=pip_size)
+            self.hazard = HazardEstimator(self.avg_interval)
+            self.feats = FeatureState(self.avg_interval, self.spike_dir)
+            self.fast = OnlineSpikeModel(D, H_FAST)
+            self.slow = OnlineSpikeModel(D, H_SLOW)
+            self.pipe_fast = _LabelPipe(self.fast, H_FAST)
+            self.pipe_slow = _LabelPipe(self.slow, H_SLOW)
 
         self.tick_idx = 0
         self.last_price: float = 0.0
@@ -862,6 +868,78 @@ def hub_paper_balance() -> float:
 
 
 # ---------------------------------------------------------------------------
+# volatility watch (observe-only — no spike model, no entries) --------------
+# ---------------------------------------------------------------------------
+
+class VolWatch:
+    """Observe-only tracker for volatility indices (continuous movement,
+    NOT rare spikes — the spike template does NOT fit these).
+
+    Subscribes to ticks, tracks price + a crude tick-interval estimate, and
+    surfaces an observe state to the dashboard ("no volatility strategy yet
+    — watching only"). No entries, no spike labeler/hazard/models. A real
+    volatility strategy is deferred until we've watched the symbol behave.
+    """
+
+    def __init__(self, symbol: str, label: str, settings: dict) -> None:
+        self.symbol = symbol
+        self.label = label
+        self.template = "volatility"
+        self.class_ = "volatility"
+        self.settings = settings
+        self.last_price: float = 0.0
+        self.tick_idx = 0
+        self.count = 0
+        self.first_epoch: Optional[float] = None
+        self.last_epoch: float = 0.0
+        self.recent: deque[tuple[float, float]] = deque(maxlen=8000)
+        self.paper: dict = {}
+        self.live: Optional[object] = None
+
+    def update_settings(self, settings: dict) -> None:
+        self.settings = settings
+
+    async def on_tick(self, price: float, epoch: float, hub: "AgentHub") -> None:
+        self.last_price = price
+        self.last_epoch = epoch
+        self.tick_idx += 1
+        self.count += 1
+        if self.first_epoch is None:
+            self.first_epoch = epoch
+        self.recent.append((epoch, price))
+
+    def save_models(self) -> None:
+        pass
+
+    def save_hazard(self) -> None:
+        pass
+
+    def snapshot(self) -> dict:
+        span = (self.last_epoch or 0.0) - (self.first_epoch or 0.0)
+        n = max(self.count, 1)
+        interval = span / n if span > 0 else 1.0
+        return {
+            "symbol": self.symbol, "label": self.label,
+            "price": round(self.last_price, 5) if self.last_price else None,
+            "template": "volatility",
+            "auto_mode": "observe",
+            "auto_reason": "no volatility strategy yet \u2014 watching only",
+            "p_fast": 0.0, "p_slow": 0.0,
+            "mean_interval": round(interval, 3),
+            "age": 0, "age_pct": 0.0,
+            "spikes": 0,
+            "threshold": 0,
+            "paper": {}, "live": None,
+            "paper_drift": None, "paper_spike": None,
+            "hazard_gaps": 0,
+            "models": {},
+            "model_weight": {"fast": 0.0, "slow": 0.0},
+            "economics": {"avg_spike_pct": 0.0, "drift_per_tick_pct": 0.0},
+            "regime_shift": False,
+        }
+
+
+# ---------------------------------------------------------------------------
 # hub
 # ---------------------------------------------------------------------------
 
@@ -871,7 +949,7 @@ class AgentHub:
         self.risk = risk_mod.RiskManager(self.settings)
         self.public: Optional[Channel] = None
         self.authed: Optional[Channel] = None
-        self.brains: dict[str, SymbolBrain] = {}
+        self.brains: dict = {}  # symbol -> SymbolBrain | VolWatch | ...
         self.contract_map: dict[int, SymbolBrain] = {}
         self.running = False
         self.started_at: float = 0.0
@@ -908,7 +986,7 @@ class AgentHub:
                 self.authed = None
             store.log("info", "live channel stopped (settings changed)")
 
-    def register_contract(self, cid: int, brain: SymbolBrain) -> None:
+    def register_contract(self, cid: int, brain: object) -> None:
         self.contract_map[cid] = brain
 
     def unregister_contract(self, cid: int) -> None:
@@ -953,24 +1031,45 @@ class AgentHub:
             if sym:
                 self.pips[sym] = float(s.get("pip_size", 0.001) or 0.001)
 
-        # brains + warm-up (cache first for instant restarts).
-        # Slow symbols need proportionally more history: the hazard model
-        # needs ~10 spike gaps, and a 1000-interval symbol only spikes
-        # once per ~1000 ticks.
+        # brains (per template). Spike-template symbols get a SymbolBrain
+        # (spike-timing hazard model + drift/spike modes + pre-spike exit);
+        # volatility-template symbols get a VolWatch (observe-only: subscribe +
+        # track price/interval, no entries, no spike model). Unknown templates
+        # fall back to a SymbolBrain so they at least don't crash.
         symbols = list(self.settings.get("symbols", config.DEFAULT_SYMBOLS))
         for sym in symbols:
             if sym not in config.SYMBOL_META:
                 continue
-            brain = SymbolBrain(sym, self.pips.get(sym, 0.001), self.settings)
-            brain.load_models()
-            brain.load_hazard()          # restore spike-timing memory
+            tmpl = config.SYMBOL_TEMPLATE.get(sym, "spike")
+            if tmpl == "spike":
+                brain = SymbolBrain(sym, self.pips.get(sym, 0.001), self.settings)
+                brain.load_models()
+                brain.load_hazard()          # restore spike-timing memory
+            elif tmpl == "volatility":
+                brain = VolWatch(sym, config.SYMBOL_META[sym].get("label", sym),
+                                 self.settings)
+            else:
+                brain = SymbolBrain(sym, self.pips.get(sym, 0.001), self.settings)
+                brain.load_models()
+                brain.load_hazard()
             self.brains[sym] = brain
 
-        # Warm-up strategy: history comes from OUR OWN tick cache (built
-        # live 24/7) first, so the heavy Deriv download happens ONLY on the
-        # very first boot. Live ticks keep appending to the cache forever.
-        base_warm = int(self.settings.get("warmup_ticks", 4000))
-        for sym, brain in self.brains.items():
+        # Staggered boot so the free host never saturates CPU when many symbols
+        # are added. The front batch warms (cache-first; download if needed),
+        # subscribes and starts trading immediately; the rest warm/subscribe in
+        # the background with pauses between symbols. Volatility symbols are
+        # cheap (subscribe + track only — no history download, no mass study).
+        # Concurrent history downloads are capped so several first-boot symbols
+        # don't all hit Deriv at once.
+        front_n = int(self.settings.get("warmup_front_batch", 2))
+        conc = int(self.settings.get("warmup_concurrent", 2))
+        sem = asyncio.Semaphore(conc)
+        ordered = list(self.brains.items())
+        front = ordered[:front_n]
+        back = ordered[front_n:]
+
+        async def _warm_one(sym: str, brain: object, sem: asyncio.Semaphore | None = None) -> None:
+            base_warm = int(self.settings.get("warmup_ticks", 4000))
             interval = config.SYMBOL_META.get(sym, {}).get("avg_interval", 500)
             warmup = max(base_warm, min(6000, int(interval * 12)))
             cached = store.load_cached_ticks(sym, warmup)
@@ -981,7 +1080,11 @@ class AgentHub:
             else:
                 logger.info("%s: first boot — downloading %d ticks once...",
                             sym, warmup)
-                ticks = await dclient.fetch_history(self.public, sym, warmup)
+                if sem:
+                    async with sem:
+                        ticks = await dclient.fetch_history(self.public, sym, warmup)
+                else:
+                    ticks = await dclient.fetch_history(self.public, sym, warmup)
                 if ticks:
                     store.cache_ticks(sym, ticks[-8000:])
                     await brain.warm_async(ticks)
@@ -989,26 +1092,70 @@ class AgentHub:
                     logger.warning("%s: no history available — learning from "
                                    "live ticks only", sym)
 
-        # ONE-TIME MASS STUDY: read ~50k real ticks per symbol DIRECTLY from
-        # Deriv (chunked page reads, nothing stored locally) and push them
-        # through the learning pipeline. The brain pre-trains on the symbol's
-        # full recent history in minutes instead of trickling in knowledge
-        # over days. Runs once; afterwards live ticks keep it sharp.
-        # Requires the public channel to be up (skip on a failed public boot
-        # so the agent can still start and trade on whatever it already has).
-        if self.public is not None and not store.load_settings().get("mass_study_done"):
-            await self._mass_study()
+        async def _mass_study_one(sym: str, brain: object) -> None:
+            if store.load_setting(f"mass_study_done_{sym}"):
+                return
+            want = int(self.settings.get("study_ticks", 20000))
+            try:
+                ticks = await dclient.fetch_history(self.public, sym, want,
+                                                    page_pause=0.25)
+                if len(ticks) < 2000:
+                    logger.warning("[study] %s: only %d ticks available — skipped",
+                                   sym, len(ticks))
+                    return
+                t0 = time.time()
+                chunk, pause = 400, 0.45
+                for i in range(0, len(ticks), chunk):
+                    for epoch, price in ticks[i:i + chunk]:
+                        brain._step(price, epoch)
+                    await asyncio.sleep(pause)
+                brain.save_models()
+                brain.save_hazard()
+                store.save_setting(f"mass_study_done_{sym}", time.time())
+                logger.info("[study] %s: studied %d ticks (%d spikes) in %.0fs — "
+                            "models saved", sym, len(ticks),
+                            brain.counters["spikes"], time.time() - t0)
+                await asyncio.sleep(1.5)
+            except Exception as e:
+                logger.warning("[study] %s: interrupted (%s) — will retry next boot",
+                               sym, e)
 
-        # live stream
-        for sym, brain in self.brains.items():
+        # Front batch: warm + subscribe + start trading immediately. Spike
+        # brains also get a background mass-study task (skipped if already done
+        # per-symbol). Volatility brains just subscribe + track (no warm, no
+        # mass study).
+        for sym, brain in front:
             if self.public is None:
                 self.status_error = "public market-data channel did not connect"
                 store.log("error", self.status_error)
                 logger.error("%s: public channel unavailable — cannot subscribe to ticks", sym)
                 continue
-        await self.public.subscribe(
-                {"ticks": sym, "subscribe": 1},
-                self._tick_handler(brain), symbol_key=sym)
+            if brain.template == "spike":
+                await _warm_one(sym, brain)
+            await self.public.subscribe(
+                    {"ticks": sym, "subscribe": 1},
+                    self._tick_handler(brain), symbol_key=sym)
+            if brain.template == "spike":
+                asyncio.create_task(_mass_study_one(sym, brain))
+
+        # Background batch: warm (with download cap + pauses) + subscribe +
+        # background mass-study, staggered so the host breathes between symbols.
+        async def _bg() -> None:
+            for sym, brain in back:
+                try:
+                    if self.public is None:
+                        continue
+                    if brain.template == "spike":
+                        await _warm_one(sym, brain, sem=sem)
+                    await self.public.subscribe(
+                            {"ticks": sym, "subscribe": 1},
+                            self._tick_handler(brain), symbol_key=sym)
+                    if brain.template == "spike":
+                        asyncio.create_task(_mass_study_one(sym, brain))
+                except Exception as e:
+                    logger.warning("bg warm/subscribe %s: %s", sym, e)
+                await asyncio.sleep(3.0)
+        asyncio.create_task(_bg())
 
         # authenticated channel (only when live trading is enabled AND public is up)
         if self.public is None:
@@ -1062,47 +1209,7 @@ class AgentHub:
         }
 
 
-    async def _mass_study(self) -> None:
-        """Deep pre-training on real history, straight from Deriv.
 
-        Sized for tiny free hosts: ~20k ticks per symbol, fetched in
-        1000-tick pages (server-friendly) and LEARNED in 400-tick slices
-        with pauses between them, so the CPU duty cycle stays low and the
-        web server / health checks never starve. Nothing is cached — the
-        knowledge distils into the model weights and hazard statistics,
-        which ARE persisted. Free hosts wipe the disk on redeploy, so the
-        study re-runs per boot; at this size that costs a few minutes of
-        gentle background work, not a crash.
-        """
-        want = int(self.settings.get("study_ticks", 20000))
-        logger.info("[study] mass-learning begins (%d ticks per symbol, direct from Deriv)", want)
-        for sym, brain in list(self.brains.items()):
-            try:
-                ticks = await dclient.fetch_history(self.public, sym, want,
-                                                    page_pause=0.25)
-                if len(ticks) < 2000:
-                    logger.warning("[study] %s: only %d ticks available — skipped",
-                                   sym, len(ticks))
-                    continue
-                t0 = time.time()
-                chunk, pause = 400, 0.45
-                for i in range(0, len(ticks), chunk):
-                    for epoch, price in ticks[i:i + chunk]:
-                        brain._step(price, epoch)
-                    await asyncio.sleep(pause)   # let the host breathe
-                brain.save_models()
-                brain.save_hazard()
-                logger.info("[study] %s: studied %d ticks (%d spikes) in %.0fs — "
-                            "models saved", sym, len(ticks),
-                            brain.counters["spikes"], time.time() - t0)
-                await asyncio.sleep(1.5)
-            except Exception as e:
-                logger.warning("[study] %s: interrupted (%s) — will retry next boot",
-                               sym, e)
-                return
-        store.save_setting("mass_study_done", time.time())
-        store.log("info", "mass study complete — brain pre-trained on real history")
-        logger.info("[study] complete — live trading with pre-trained brain")
 
     def _tick_handler(self, brain: SymbolBrain):
         async def handler(msg: dict) -> None:
@@ -1165,7 +1272,7 @@ class AgentHub:
             poc = msg.get("proposal_open_contract") or {}
             cid = int(poc.get("contract_id", 0) or 0)
             brain = self.contract_map.get(cid)
-            if brain:
+            if brain and isinstance(brain, SymbolBrain):
                 brain.on_poc(msg, self)
         return handler
 
@@ -1180,7 +1287,7 @@ class AgentHub:
             cid = int(c.get("contract_id", 0) or 0)
             underlying = c.get("underlying", "")
             brain = self.brains.get(underlying)
-            if not brain or brain.live or not cid:
+            if not brain or brain.live or not cid or not isinstance(brain, SymbolBrain):
                 continue
             ct = c.get("contract_type", "")
             side = "UP" if ct == "MULTUP" else "DOWN"

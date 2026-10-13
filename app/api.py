@@ -171,6 +171,8 @@ def set_settings(body: SettingsBody):
         updates.pop("deriv_pat", None)
     for k, v in updates.items():
         store.save_setting(k, v)
+    if "symbols" in updates and updates["symbols"]:   # user curated symbols ->
+        store.save_setting("symbols_user_edited", True)  #   don't auto-follow code default
     settings = store.load_settings()
     # profit settings are locked in — user edits can't change them
     for k, v in config.FORCED_SETTINGS.items():

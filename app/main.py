@@ -71,6 +71,23 @@ async def lifespan(app: FastAPI):
             store.save_setting(k, v)
             settings[k] = v
             logger.info("forced setting %s = %s", k, v)
+    # Auto-follow the code DEFAULT_SYMBOLS on boot when the user has not
+    # curated symbols themselves (symbols_user_edited False). This way new
+    # symbols added to the code default are picked up on redeploy without the
+    # user having to re-select. User-curated symbol sets (symbols_user_edited
+    # True) are left alone. Only extend to the code default when the stored set
+    # is a subset of it (so we never remove a code-default symbol the user kept,
+    # and never add a symbol the user explicitly removed).
+    stored_syms = settings.get("symbols") or []
+    default_syms = list(config.DEFAULT_SYMBOLS)
+    if (not settings.get("symbols_user_edited") and
+            stored_syms != default_syms and
+            set(stored_syms).issubset(default_syms)):
+        if set(stored_syms) != set(default_syms):
+            store.save_setting("symbols", default_syms)
+            settings["symbols"] = default_syms
+            logger.info("symbols auto-updated to code default (%d symbols) — user had not curated", len(default_syms))
+        settings["symbols_user_edited"] = False
     hub.settings = settings
     if settings.get("agent_running") or config.AUTO_START:
         if not settings.get("agent_running"):

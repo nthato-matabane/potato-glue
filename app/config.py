@@ -129,6 +129,12 @@ DEFAULT_SETTINGS: dict = {
     "auto_switch_margin": 0.20,   # switch modes only if other side is 20% better
     "warmup_ticks": 4000,         # historical ticks fetched at startup
     "min_balance_usd": 1.0,       # never trade below this balance
+    # set True by the settings page when the user saves a symbol choice;
+    # when False, the agent auto-follows the code DEFAULT_SYMBOLS on boot
+    # (so new symbols added to the code default are picked up on redeploy
+    # without the user having to re-select). When True, the user's curated
+    # symbol set is preserved (the agent does not auto-add/remove).
+    "symbols_user_edited": False,
     # staggered boot: how many symbols to warm + start trading immediately
     # (the rest warm in the background with pauses so the free host never
     # saturates). Tunable via the settings page or DERIV_* env.

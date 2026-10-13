@@ -1186,6 +1186,8 @@ class AgentHub:
         """
         symbols = {}
         for sym, b in self.brains.items():
+            if not hasattr(b, "fast"):
+                continue  # observe-only brain (e.g. VolWatch) — no spike learning yet
             f, s = b.fast, b.slow
             symbols[sym] = {
                 "updates": int(f.n_updates + s.n_updates),

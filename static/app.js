@@ -108,7 +108,9 @@ async function refreshStatus() {
 
   renderSymbols(s.symbols || {}, s.last_signal || {});
   $("stat-trades").textContent = countLive(s.symbols || {});
-  renderLearning(s.learning, s.error, s.notebook_status);
+  // notebook_status is served at the top level (api.py promotes it from
+  // s.learning.notebook_status). Defend in case the shape changes.
+  renderLearning(s.learning, s.error, s.notebook_status || (s.learning && s.learning.notebook_status));
   window._snap = s;
 }
 

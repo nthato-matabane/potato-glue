@@ -134,6 +134,17 @@ def status():
         s: getattr(b, "last_signal", None)
         for s, b in dict(brains).items()
     }
+    # The snapshot nests notebook_status inside "learning" (from
+    # learning_snapshot()). Promote it to the top level too so the dashboard's
+    # renderLearning(s.learning, s.error, s.notebook_status) actually gets it.
+    # Without this, s.notebook_status is undefined and the durability row is
+    # blank (the old per-symbol "add GITHUB_TOKEN to survive redeploys" line
+    # was driven by learning.notebook_on, which was nested correctly).
+    _learning = snap.get("learning") if isinstance(snap.get("learning"), dict) else {}
+    if "notebook_status" in _learning:
+        snap["notebook_status"] = _learning["notebook_status"]
+    if "notebook_on" in _learning:
+        snap["notebook_on"] = _learning["notebook_on"]
     return snap
 
 

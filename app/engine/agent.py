@@ -1093,7 +1093,7 @@ class AgentHub:
                                    "live ticks only", sym)
 
         async def _mass_study_one(sym: str, brain: object) -> None:
-            if store.load_setting(f"mass_study_done_{sym}"):
+            if store.load_json(f"mass_study_done_{sym}"):
                 return
             want = int(self.settings.get("study_ticks", 20000))
             try:
